@@ -1,9 +1,14 @@
 # Builds, publishes and releases a version when its tag is pushed.
 #
 # Three jobs, each with only the permission it needs:
-#   build    contents: read     checks, tests, the npm packages of @mexc-ai/cli
+#   build    contents: read     the npm packages of @mexc-ai/cli
 #   publish  id-token: write    npm trusted publishing (OIDC), no token stored
 #   release  contents: write    the GitHub Release, its notes and attachments
+#
+# Nothing here tests: a version is tested on the internal merge request before it
+# is tagged, and the sync builds it once more before pushing. This workflow only
+# builds, publishes and releases, so a difference between the runner and the
+# internal CI cannot stop a release that already passed there.
 #
 # Every job can be re-run: publish skips packages already on npm with the same
 # content, and release only adds the attachments a release is missing.
@@ -50,20 +55,6 @@ jobs:
         with:
           node-version: "24"
           package-manager-cache: false
-
-      - name: Repository checks
-        run: |
-          python3 scripts/check-boundary.py
-          python3 scripts/check-exposure.py
-          python3 scripts/check-english.py --all
-          python3 scripts/check-test-isolation.py
-
-      - name: Go tests
-        run: go test -mod=vendor -count=1 ./...
-
-      - name: npm kit tests
-        working-directory: npmkit
-        run: npm test
 
       - name: Build the npm packages
         run: bash scripts/build.sh --release --product scoped

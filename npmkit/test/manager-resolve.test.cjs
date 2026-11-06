@@ -36,6 +36,9 @@ function samePath(left, right) {
   return String(left).toLowerCase() === String(right).toLowerCase();
 }
 
+// Shims are written in PATHEXT's own case. Windows matches a name to a file
+// case-insensitively, but these tests run on any host, and on a case-sensitive
+// filesystem (Linux CI) 'npm.cmd' is not the 'npm.CMD' the resolver asks for.
 function shim(dir, name) {
   const file = path.join(dir, name);
   fs.writeFileSync(file, '@echo off\n', { mode: 0o755 });
@@ -58,8 +61,8 @@ function shim(dir, name) {
 test('the package manager is resolved from PATH, never from the current directory', (t) => {
   const onPath = tempDir(t, 'mexc-path-');
   const cwdLike = tempDir(t, 'mexc-cwd-');
-  shim(cwdLike, 'npm.cmd');
-  const real = shim(onPath, 'npm.cmd');
+  shim(cwdLike, 'npm.CMD');
+  const real = shim(onPath, 'npm.CMD');
 
   const previous = process.cwd();
   process.chdir(cwdLike);
@@ -84,7 +87,7 @@ test('the package manager is resolved from PATH, never from the current director
 // manager in, and the answer must be "not found" rather than the planted file.
 test('an all-current-directory PATH resolves to nothing rather than to the plant', (t) => {
   const cwdLike = tempDir(t, 'mexc-cwd-');
-  shim(cwdLike, 'npm.cmd');
+  shim(cwdLike, 'npm.CMD');
   const env = { PATHEXT: '.CMD', PATH: ['', '.'].join(path.delimiter) };
 
   assert.equal(manager.resolveOnPath('npm', env, 'win32'), null);
@@ -92,11 +95,11 @@ test('an all-current-directory PATH resolves to nothing rather than to the plant
 
 test('PATHEXT order decides, and a missing manager is null rather than a bare name', (t) => {
   const dir = tempDir(t, 'mexc-ext-');
-  shim(dir, 'npm.cmd');
-  shim(dir, 'npm.exe');
+  shim(dir, 'npm.CMD');
+  shim(dir, 'npm.EXE');
   const env = { PATHEXT: '.EXE;.CMD', PATH: dir };
 
-  assert.ok(samePath(manager.resolveOnPath('npm', env, 'win32'), path.join(dir, 'npm.exe')));
+  assert.ok(samePath(manager.resolveOnPath('npm', env, 'win32'), path.join(dir, 'npm.EXE')));
   assert.equal(manager.resolveOnPath('pnpm', env, 'win32'), null,
     'a manager that is not installed must not fall through to a bare name the shell would search');
 });

@@ -188,17 +188,18 @@ VENDOR_DIR = "vendor/"
 # `git ls-files` takes it as a pathspec; a filesystem walk takes the prefix.
 GIT_EXCLUDE_VENDOR = ":(exclude)vendor/"
 
-# .internal/ holds files that only the internal build platform reads (its image,
-# its CI configuration, the release sync tooling). The sync excludes the whole
-# directory, so nothing in it is ever published, and the invariants here — which
-# are about the published tree — do not apply to it.
-INTERNAL_DIR = ".internal/"
-GIT_EXCLUDE_INTERNAL = ":(exclude).internal/"
+# The paths only the internal side reads: .internal/ (the build image, the
+# release sync tooling) and the internal git server's CI configuration and merge
+# request templates, which have to sit where that server looks for them. The
+# sync leaves all of them out of every published snapshot, and the invariants
+# here, which are about the published tree, do not apply to them.
+UNPUBLISHED = (".internal/", ".gitlab/", ".gitlab-ci.yml")
+GIT_EXCLUDE_INTERNAL = [f":(exclude){path}" for path in UNPUBLISHED]
 
 
 def _outside_vendor(rel):
     """True when a repo-relative path is ours to lint (not vendored, not internal)."""
-    return not rel.startswith(VENDOR_DIR) and not rel.startswith(INTERNAL_DIR)
+    return not rel.startswith(VENDOR_DIR) and not rel.startswith(UNPUBLISHED)
 
 
 def _read_module_path():
@@ -619,7 +620,7 @@ def tracked_markdown():
     try:
         out = subprocess.run(
             ["git", "-C", str(ROOT), "ls-files", "-z", "--", "*.md", GIT_EXCLUDE_VENDOR,
-             GIT_EXCLUDE_INTERNAL],
+             *GIT_EXCLUDE_INTERNAL],
             stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False,
         )
     except OSError:
@@ -1252,7 +1253,7 @@ def tracked_go_files():
     try:
         out = subprocess.run(
             ["git", "-C", str(ROOT), "ls-files", "-z", "--", "*.go", GIT_EXCLUDE_VENDOR,
-             GIT_EXCLUDE_INTERNAL],
+             *GIT_EXCLUDE_INTERNAL],
             stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False,
         )
     except OSError:

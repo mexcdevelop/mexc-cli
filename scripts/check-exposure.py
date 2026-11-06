@@ -74,11 +74,12 @@ def force_utf8_stdio():
 ROOT = Path(__file__).resolve().parent.parent
 MARKER = "exposure-ok"
 SELF = "scripts/check-exposure.py"
-# .internal/ is excluded from the sync to the public repository as a whole, so
-# what it names is never published. It is also exactly where the internal
-# platform's image, CI configuration and release tooling live, which name hosts
-# and services by necessity; scanning it would only teach people to ignore red.
-INTERNAL_DIR = ".internal/"
+# .internal/ and the internal git server's CI configuration and merge request
+# templates (.gitlab-ci.yml, .gitlab/) are left out of every published snapshot,
+# so what they name is never published. They hold the internal platform's image,
+# CI and release tooling, which name hosts and services by necessity; scanning
+# them would only teach people to ignore red.
+UNPUBLISHED = (".internal/", ".gitlab/", ".gitlab-ci.yml")
 
 # Hosts a published tree may name. Anything else — an internal registry, a build
 # host, another git server — is a finding, WITHOUT this file naming it.
@@ -199,7 +200,7 @@ def tracked():
     if out.returncode != 0:
         sys.exit("check-exposure: not a git repository")
     return [p for p in out.stdout.decode("utf-8", "replace").splitlines()
-            if not p.startswith(("vendor/", INTERNAL_DIR)) and p != SELF]
+            if not p.startswith(("vendor/", *UNPUBLISHED)) and p != SELF]
 
 
 def local_types():

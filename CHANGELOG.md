@@ -8,6 +8,18 @@ Dates are the release date. Versions are `vMAJOR.MINOR.PATCH`; while the
 major is 0, every release is a patch bump, breaking changes included, and each
 entry says what breaks.
 
+## v0.0.24 — 2026-11-06
+
+The first version published to npm from the public repository. v0.0.23 was
+tagged, but its release build stopped on a test and nothing reached npm, so
+everything listed under v0.0.23 ships with this version. No command, flag or
+output changed.
+
+- Fixed: two npm kit tests failed on a case-sensitive filesystem such as
+  Linux. They are what stopped the v0.0.23 release.
+- The release workflow only builds, publishes and creates the release; it no
+  longer runs the test suite. CI still runs the full gate on every pull request.
+
 ## v0.0.23 — 2026-11-04
 
 First release from the public repository,
