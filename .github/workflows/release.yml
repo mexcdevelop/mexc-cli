@@ -1,0 +1,147 @@
+# Builds, publishes and releases a version when its tag is pushed.
+#
+# Three jobs, each with only the permission it needs:
+#   build    contents: read     checks, tests, the npm packages of @mexc-ai/cli
+#   publish  id-token: write    npm trusted publishing (OIDC), no token stored
+#   release  contents: write    the GitHub Release, its notes and attachments
+#
+# Every job can be re-run: publish skips packages already on npm with the same
+# content, and release only adds the attachments a release is missing.
+#
+# npm binds trusted publishing to this file's name (release.yml) and to the
+# `npm` environment. Renaming either breaks publishing until every package's
+# trusted publisher on npmjs.com is updated too.
+name: release
+
+on:
+  push:
+    tags: ["v*.*.*"]
+
+permissions: {}
+
+concurrency:
+  group: release-${{ github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Refuse a prerelease tag
+        if: contains(github.ref_name, '-')
+        run: |
+          echo "::error::prerelease tags are not released: ${GITHUB_REF_NAME}"
+          exit 1
+
+      # Full history and tags: the build reads its version from the tag at HEAD.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: false
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "24"
+          package-manager-cache: false
+
+      - name: Repository checks
+        run: |
+          python3 scripts/check-boundary.py
+          python3 scripts/check-exposure.py
+          python3 scripts/check-english.py --all
+          python3 scripts/check-test-isolation.py
+
+      - name: Go tests
+        run: go test -mod=vendor -count=1 ./...
+
+      - name: npm kit tests
+        working-directory: npmkit
+        run: npm test
+
+      - name: Build the npm packages
+        run: bash scripts/build.sh --release --product scoped
+
+      # Windows signing attaches here, between building and packing, once it is
+      # enabled: detached signatures made elsewhere are verified against this
+      # build's own binaries and attached to them.
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: npm-packages
+          path: |
+            dist/npm/scoped/release-manifest.json
+            dist/npm/scoped/tarballs/
+          if-no-files-found: error
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    environment: npm
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: npm-packages
+          path: dist/npm/scoped
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "24"
+          registry-url: "https://registry.npmjs.org"
+          package-manager-cache: false
+
+      # Trusted publishing needs npm 11.5.1 or later; adding a dist-tag through
+      # it (publish.sh's release-<version> tag) needs 11.21.0 or later.
+      - name: Update npm
+        run: npm install -g npm@^11.21.0
+
+      - name: Publish to npm
+        run: bash .github/scripts/publish.sh dist/npm/scoped
+
+  release:
+    needs: publish
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: npm-packages
+          path: dist/npm/scoped
+
+      - name: Release attachments
+        run: bash .github/scripts/release-assets.sh dist/npm/scoped dist/release
+
+      - name: Create the release, or complete it
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          bash .github/scripts/release-notes.sh "$GITHUB_REF_NAME" > dist/release-notes.md
+          if ! gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            gh release create "$GITHUB_REF_NAME" dist/release/* \
+              --verify-tag --title "$GITHUB_REF_NAME" --notes-file dist/release-notes.md --latest
+            exit 0
+          fi
+          existing="$(gh release view "$GITHUB_REF_NAME" --json assets --jq '.assets[].name')"
+          for file in dist/release/*; do
+            if ! printf '%s\n' "$existing" | grep -qx "$(basename "$file")"; then
+              gh release upload "$GITHUB_REF_NAME" "$file"
+            fi
+          done

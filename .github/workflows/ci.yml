@@ -1,0 +1,70 @@
+# Checks every push to main and every pull request: the repository invariants,
+# formatting, build, vet, tests and lint. The same gates the pre-commit hook
+# (scripts/install-hooks.sh) runs locally.
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: false
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "24"
+          package-manager-cache: false
+
+      - name: Repository checks
+        run: |
+          python3 scripts/check-boundary.py
+          python3 scripts/check-exposure.py
+          python3 scripts/check-english.py --all
+          python3 scripts/check-test-isolation.py
+
+      - name: gofmt
+        run: |
+          unformatted="$(git ls-files '*.go' ':(exclude)vendor/' | xargs gofmt -l)"
+          if [ -n "$unformatted" ]; then
+            echo "::error::unformatted Go files:"
+            echo "$unformatted"
+            exit 1
+          fi
+
+      - name: Build and vet
+        run: |
+          go build -mod=vendor ./...
+          go vet -mod=vendor ./...
+
+      - name: Go tests
+        run: go test -mod=vendor -count=1 ./...
+
+      - name: npm kit tests
+        working-directory: npmkit
+        run: npm test
+
+      - name: Read the pinned golangci-lint version
+        id: lint
+        run: echo "version=v$(cat .golangci-version)" >> "$GITHUB_OUTPUT"
+
+      - uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9.3.0
+        with:
+          version: ${{ steps.lint.outputs.version }}

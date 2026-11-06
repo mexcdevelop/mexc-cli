@@ -1,0 +1,23 @@
+# vendor/ is third-party source copied in by `go mod vendor`, not code this
+# repository authors. Marking it keeps the language statistics describing our own
+# code rather than our dependencies'.
+#
+# Deliberately NOT `-diff`: that would collapse vendored changes out of every
+# diff, which is convenient right up to the day someone needs to see what a
+# dependency bump actually pulled in. Review noise is the lesser cost.
+#
+# This is presentation only. The gates that must ignore vendor/ do so explicitly
+# (scripts/check-boundary.py, scripts/check-english.py, the gofmt step in
+# scripts/install-hooks.sh); nothing here enforces anything.
+vendor/** linguist-vendored
+
+# Normalise line endings, now that the packaged binaries reach Windows and a
+# contributor may be on it. Git's default on Windows (core.autocrlf=true) checks
+# files out with CRLF, and a CRLF-committed shell script or .cjs breaks on the
+# Unix side the moment the shebang line carries a stray \r — silently, with an
+# error naming an interpreter that does not exist.
+#
+# Safe to add here rather than later: every tracked file is LF today (verified
+# with `git ls-files --eol` — zero crlf/mixed in both the index and the working
+# tree), so this fixes the convention going forward and renormalises nothing.
+* text=auto eol=lf

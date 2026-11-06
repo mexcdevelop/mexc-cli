@@ -1,0 +1,18 @@
+---
+description: mexc-cli project rules — English-only + pointer to AGENTS.md
+alwaysApply: true
+---
+
+# mexc-cli — AI Agent Rules
+
+The single source of truth is [AGENTS.md](../../AGENTS.md). Read it before writing any skill, API wrapper, or code. This rule only restates the one most often missed.
+
+## English-only (non-negotiable)
+
+Everything written into this repository is English-only — Go identifiers, **comments**, string literals, log messages, commit messages, MR/PR descriptions (Conventional Commits in English), skill files, and docs. No CJK anywhere.
+
+CI enforces this (`scripts/check-english.py` scans changed Go lines and the commit message; any CJK character turns the pipeline red). Write English rather than working around it.
+
+## Everything else
+
+See [AGENTS.md](../../AGENTS.md) for the hard contracts and [CONTRIBUTING.md](../../CONTRIBUTING.md) for how to add a directory. Run the local checks in AGENTS.md §6 before opening an MR.

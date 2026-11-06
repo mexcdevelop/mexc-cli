@@ -1,0 +1,48 @@
+# Editor / OS
+.DS_Store
+*.swp
+*~
+.idea/
+.vscode/
+
+# Temp / backup
+*.bak
+*.tmp
+*.orig
+
+# Tech-stack decision review draft (local doc source, not tracked)
+docs/tech-stack-decision*.xml
+
+# Locally generated diagrams (not source)
+diagrams/
+
+# Go build artifacts
+/mexc
+/mexc.exe
+# The former binary name: still produced by an older branch, and a stale copy
+# may sit in a working tree from before the rename.
+/mexc-cli
+/mexc-cli.exe
+/dist/
+*.test
+*.out
+coverage.txt
+
+# CI-local Go toolchain / caches (downloaded by a CI shell runner)
+/.gotool/
+/.gocache/
+
+# Brainstorm/plan process artifacts (design records, kept local, not tracked)
+docs/superpowers/
+.superpowers/
+
+# Python bytecode from running the scripts/*.py checks locally
+scripts/__pycache__/
+__pycache__/
+
+# Locally installed skill copies and their lock file. `skills install` writes
+# these into whatever directory it is run from, and the lock records the ABSOLUTE
+# source path — a developer's $HOME, which must never reach a published repo.
+# They are per-machine state, not source; the tracked copies live in skills/.
+/.claude/
+/skills-lock.json

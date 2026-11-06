@@ -1,0 +1,126 @@
+# golangci-lint config (v2).
+#
+# Two layers of intent:
+#   1. A set of zero-false-positive, healthy default linters (bug / perf / style).
+#   2. depguard turns the "dependencies only point downward" rule
+#      into a lint the machine can enforce, one rule per
+#      layer: pkg -> internal -> framework -> editions/cmd, plus the thin
+#      skills/**/api wrappers (pure data over pkg/, never cobra). The
+#      editions-must-not-import-internal rule is what keeps the machinery
+#      replaceable and this module consumable from the outside.
+#      Architecture constraints are enforced by machine, not left to review
+#      discipline.
+
+version: "2"
+
+run:
+  timeout: 5m
+
+linters:
+  default: none
+  enable:
+    - asasalint        # []any accidentally passed to an ...any variadic
+    - asciicheck       # identifiers must not contain non-ASCII
+    - bidichk          # dangerous unicode bidirectional characters
+    - bodyclose        # HTTP response body must be Closed
+    - copyloopvar      # loop-variable copy issues
+    - durationcheck    # misuse of multiplying two Durations
+    - errcheck         # unchecked error returns
+    - errorlint        # error-wrapping best practice (%w / errors.As)
+    - fatcontext       # nested context inside a loop
+    - gocheckcompilerdirectives # validate //go: directives
+    - gocritic         # bug / perf / style diagnostics
+    - goprintffuncname # printf-style funcs should end in f
+    - govet            # suspicious constructs
+    - ineffassign      # ineffective assignments
+    - misspell         # common spelling mistakes
+    - nilerr           # error non-nil but nil returned
+    - nolintlint       # malformed nolint directives
+    - staticcheck      # comprehensive static analysis
+    - unconvert        # redundant type conversions
+    - unused           # unused consts / vars / funcs / types
+    - depguard         # forbid layering-violating imports
+
+  settings:
+    depguard:
+      rules:
+        # Layer 1 — pkg/ is the foundation, blind to everything above it.
+        pkg-no-upward:
+          list-mode: lax
+          files:
+            - "**/pkg/**"
+          deny:
+            - pkg: github.com/mexcdevelop/mexc-cli/internal
+              desc: "pkg/ is the base layer, must not depend on the machinery (dependencies only point downward)"
+            - pkg: github.com/mexcdevelop/mexc-cli/framework
+              desc: "pkg/ is the base layer, must not depend on the composition contract"
+            - pkg: github.com/mexcdevelop/mexc-cli/editions
+              desc: "pkg/ is the base layer, must not depend on a product"
+            - pkg: github.com/mexcdevelop/mexc-cli/cmd
+              desc: "pkg/ is the base layer, must not depend on a binary facade"
+            - pkg: github.com/mexcdevelop/mexc-cli/skills
+              desc: "pkg/ is the base layer, must not depend on business sub-domains"
+        # Layer 2 — internal/ is the machinery: it may use pkg/, never a layer above.
+        internal-no-upward:
+          list-mode: lax
+          files:
+            - "**/internal/**"
+          deny:
+            - pkg: github.com/mexcdevelop/mexc-cli/framework
+              desc: "internal/ is machinery, must not depend on the composition contract that wraps it"
+            - pkg: github.com/mexcdevelop/mexc-cli/editions
+              desc: "internal/ is product-agnostic, must not depend on a product"
+            - pkg: github.com/mexcdevelop/mexc-cli/cmd
+              desc: "internal/ must not depend on a binary facade"
+        # Layer 3 — framework/ knows the SHAPE of an edition, never a concrete one.
+        framework-no-edition:
+          list-mode: lax
+          files:
+            - "**/framework/**"
+          deny:
+            - pkg: github.com/mexcdevelop/mexc-cli/editions
+              desc: "framework/ defines the injection contract and must stay blind to any concrete product"
+            - pkg: github.com/mexcdevelop/mexc-cli/cmd
+              desc: "framework/ must not depend on a binary facade"
+        # Layer 4 — an edition composes against ports + the framework door, never the machinery.
+        # This is the constraint that keeps the two products physically splittable: a separate
+        # module cannot import internal/ at all. check-boundary Invariant 10 asserts the same
+        # rule independently, so it still holds where golangci-lint is not run.
+        editions-no-internal:
+          list-mode: lax
+          files:
+            - "**/editions/**"
+          deny:
+            - pkg: github.com/mexcdevelop/mexc-cli/internal
+              desc: "an edition must compose against pkg/ ports + framework/, never the machinery — importing internal/ would block the repo split (check-boundary Invariant 10)"
+        # skills/**/api is a thin business wrapper: pure data + pure functions over pkg/.
+        api-no-framework:
+          list-mode: lax
+          files:
+            - "**/skills/**/api/**"
+          deny:
+            - pkg: github.com/mexcdevelop/mexc-cli/internal
+              desc: "api/ thin wrappers must not depend on the machinery"
+            - pkg: github.com/mexcdevelop/mexc-cli/framework
+              desc: "api/ thin wrappers must not depend on the composition contract"
+            - pkg: github.com/mexcdevelop/mexc-cli/cmd
+              desc: "api/ thin wrappers must not depend on a binary facade"
+            - pkg: github.com/spf13/cobra
+              desc: "api/ must stay pure data + pure functions; cobra is confined to internal/cli"
+
+  exclusions:
+    rules:
+      # Relax for test files: bodyclose (httptest is closed by server.Close) and
+      # depguard (contract tests inside api dirs need to drive the framework).
+      - path: _test\.go$
+        linters:
+          - bodyclose
+          - depguard
+
+# Report every finding. The defaults (max-same-issues 3, max-issues-per-linter 50)
+# truncate: six identical errcheck findings in one file arrived as three, so
+# "clean" was being measured against a report that had already hidden work. A
+# gate that under-reports is worse than one that is merely strict.
+issues:
+  max-same-issues: 0
+  max-issues-per-linter: 0

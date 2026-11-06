@@ -1,0 +1,8 @@
+[
+  { "id": "darwin-arm64", "nodePlatform": "darwin", "nodeArch": "arm64", "goos": "darwin", "goarch": "arm64" },
+  { "id": "darwin-x64", "nodePlatform": "darwin", "nodeArch": "x64", "goos": "darwin", "goarch": "amd64" },
+  { "id": "linux-arm64", "nodePlatform": "linux", "nodeArch": "arm64", "goos": "linux", "goarch": "arm64" },
+  { "id": "linux-x64", "nodePlatform": "linux", "nodeArch": "x64", "goos": "linux", "goarch": "amd64" },
+  { "id": "win32-arm64", "nodePlatform": "win32", "nodeArch": "arm64", "goos": "windows", "goarch": "arm64" },
+  { "id": "win32-x64", "nodePlatform": "win32", "nodeArch": "x64", "goos": "windows", "goarch": "amd64" }
+]
