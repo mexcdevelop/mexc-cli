@@ -50,7 +50,8 @@ responses:
 backend or CLI-managed state:
 - a write fails with `failed_precondition`: `write operation "<name>" is blocked in --read-only mode` (hint: drop --read-only to allow writes);
 - profile changes are state changes too, blocked the same way;
-- an MCP server started with `--read-only` withholds write tools entirely.
+- an MCP server started with `--read-only` withholds write tools entirely;
+- `--help` / `help <command>` under `--read-only` lists only the commands that can run: write operations, and groups that hold nothing else, are left out. A write you name directly still shows its own help, and running it is refused as above.
 
 A download is a **read** (it fetches server data; the local file it produces is
 that read's output, like redirecting stdout), so it is **allowed** under

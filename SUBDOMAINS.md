@@ -46,9 +46,9 @@ Two things stop it being written: `check-boundary` Invariant 14 rejects the decl
 
 | subdomain | meaning | scope | access | visibility | signed | identity |
 |------|------|-------|--------|------------|:------:|:--------:|
-| `marketv2` | Spot CLI gateway market data V2 (grouped symbols / market tickers / coin info / concept plates / depth / deals) | `spot.marketv2` | read | public | yes | yes |
+| `marketv2` | Spot CLI gateway market data V2 (grouped symbols / market tickers / coin info / concept plates / depth / deals) | `spot.marketv2` | read | public | no | no |
 | `kline`    | Spot CLI public kline data (candlestick series / earliest queryable window) | `spot.kline` | read | public | no | no |
-| `market-search` | Spot CLI gateway market support search | `spot.market-search` | read | public | yes | yes |
+| `market-search` | Spot CLI gateway market support search | `spot.market-search` | read | public | no | no |
 | `account`  | Spot account's own new-trade stream (WS) | `spot.account`  | read | public | yes | yes |
 | `trade`     | Spot trading (place incl. TP/SL, trigger, trailing & OCO order types / modify / cancel / query / fills) | `spot.trade`     | read/write | public | yes | yes |
 | `dca`       | Spot DCA / auto-invest (eligible pairs, caller's strategies & plans) | `spot.dca` | read/write | public | yes | yes |
@@ -56,7 +56,7 @@ Two things stop it being written: `check-boundary` Invariant 14 rejects the decl
 | `grid`      | Spot grid trading (AI params, create / modify / stop grids, profit withdrawal) | `spot.grid` | read/write | public | yes | yes |
 | `fee`       | Spot fee rate center (caller's fees by pair / channel / overall, zero-fee pairs) | `spot.fee` | read | public | yes | yes |
 
-> `dca` / `convert` / `grid` / `fee` carry an API key (`identity: yes`) and sign each request client-side (`signed: yes`) with the profile secret; the gateway verifies the signature. Public market data is the exception: `kline` has no identity or signing default, and selected `marketv2` operations override the subdomain defaults to no identity and no signing. `convert`'s `quantity-limit` used to be declared `identity: none` on the reasoning that its backend reads no member and was corrected because it is not a public market-data operation.
+> `dca` / `convert` / `grid` / `fee` carry an API key (`identity: yes`) and sign each request client-side (`signed: yes`) with the profile secret; the gateway verifies the signature. Public market data is the exception: `kline`, `marketv2` and `market-search` have no identity or signing default. Within `marketv2`, `user-eftd-info` is the one operation that overrides both, because it reads the caller's own first-deposit eligibility rather than market data. `convert`'s `quantity-limit` used to be declared `identity: none` on the reasoning that its backend reads no member and was corrected because it is not a public market-data operation.
 | `trade`     | Spot trading (place / cancel / query / fills)       | `spot.trade`     | read/write | public | yes | yes |
 | `asset`     | Spot asset surface (overview / balances / deposit-withdraw & transfer history / transfers / bills / prices / pnl) | `spot.asset` | read/write | public | yes | yes |
 

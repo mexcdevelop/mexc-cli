@@ -148,3 +148,86 @@ test('a version query follows the user configuration first and falls back to the
   assert.ok(!calls[0].includes('--registry'), 'the first attempt must let npm resolve the registry itself');
   assert.deepEqual(calls[1].slice(-2), ['--registry', manager.PUBLIC_REGISTRY]);
 });
+
+// The batch shims npm and Node write, verbatim from real installs.
+const SHIMS = path.join(__dirname, 'testdata', 'cmdshim');
+const shimText = (name) => fs.readFileSync(path.join(SHIMS, name), 'utf8');
+
+test('a Windows batch shim is read for the script it runs, and nothing else is guessed at', () => {
+  assert.deepEqual(manager.parseCmdShim(shimText('npm-global-mexc.cmd')), {
+    script: 'node_modules\\@mexc-ai\\cli\\bin\\launcher.cjs', nodeArgs: [], prefixScript: '', prefixOverride: '',
+  });
+  assert.deepEqual(manager.parseCmdShim(shimText('node-dist-npm.cmd')), {
+    script: 'node_modules\\npm\\bin\\npm-cli.js',
+    nodeArgs: [],
+    prefixScript: 'node_modules\\npm\\bin\\npm-prefix.js',
+    prefixOverride: 'node_modules\\npm\\bin\\npm-cli.js',
+  });
+  assert.equal(manager.parseCmdShim(shimText('node-dist-npx.cmd')).script, 'node_modules\\npm\\bin\\npx-cli.js');
+  // Anything else is not guessed at: a hand-written batch file, and a shim
+  // whose node arguments are not plain flags.
+  assert.equal(manager.parseCmdShim('@echo off\r\nnode "%~dp0\\tool.js" %*\r\n'), null);
+  const tampered = shimText('npm-global-mexc.cmd').replace('"%_prog%"  "', '"%_prog%" %EVIL% "');
+  assert.notEqual(tampered, shimText('npm-global-mexc.cmd'), 'the fixture no longer has the text this edits');
+  assert.equal(manager.parseCmdShim(tampered), null);
+  // An older Node's npm.cmd: no npm-prefix.js, the prefix asked of npm-cli.js
+  // itself. Read as the bundled npm it would drop the user's upgraded global one.
+  const older = shimText('node-dist-npm.cmd').replace(/\r\n/g, '\n')
+    .replace('SET "NPM_PREFIX_JS=%~dp0\\node_modules\\npm\\bin\\npm-prefix.js"\n', '')
+    .replace('\'CALL "%NODE_EXE%" "%NPM_PREFIX_JS%"\'', '\'CALL "%NODE_EXE%" "%NPM_CLI_JS%" prefix -g\'');
+  assert.ok(!older.includes('NPM_PREFIX_JS') && older.includes('prefix -g'), 'the fixture no longer has the lines this edits');
+  assert.equal(manager.parseCmdShim(older), null);
+});
+
+test('Node\'s npm.cmd is started as node and npm-cli.js, preferring the global prefix\'s npm', (t) => {
+  const dir = tempDir(t, 'shim-dist-');
+  const prefix = tempDir(t, 'shim-prefix-');
+  const bin = path.join(dir, 'node_modules', 'npm', 'bin');
+  fs.mkdirSync(bin, { recursive: true });
+  fs.writeFileSync(path.join(dir, 'npm.cmd'), shimText('node-dist-npm.cmd'));
+  fs.writeFileSync(path.join(bin, 'npm-cli.js'), '');
+  // npm-prefix.js prints the global prefix; this one prints a directory of the
+  // test's, and runs under the real node, as the shim's FOR /F would.
+  fs.writeFileSync(path.join(bin, 'npm-prefix.js'), `process.stdout.write(${JSON.stringify(prefix)})`);
+
+  let started = manager.shimInvocation(path.join(dir, 'npm.cmd'));
+  assert.equal(started.file, process.execPath);
+  assert.deepEqual(started.args, [path.join(bin, 'npm-cli.js')], 'no npm in the prefix: the bundled one');
+
+  const global = path.join(prefix, 'node_modules', 'npm', 'bin');
+  fs.mkdirSync(global, { recursive: true });
+  fs.writeFileSync(path.join(global, 'npm-cli.js'), '');
+  started = manager.shimInvocation(path.join(dir, 'npm.cmd'));
+  assert.deepEqual(started.args, [path.join(global, 'npm-cli.js')], 'the prefix\'s npm, as npm.cmd prefers');
+});
+
+// On Windows Node 22+ printed DEP0190 for every run, because a .cmd went
+// through cmd.exe with `shell: true` -- measured: `mexc update` on Node 24.
+test('on Windows run starts node with the shim\'s script, and no shell', (t) => {
+  const realPlatform = process.platform;
+  Object.defineProperty(process, 'platform', { value: 'win32', configurable: true });
+  t.after(() => Object.defineProperty(process, 'platform', { value: realPlatform, configurable: true }));
+  const dir = tempDir(t, 'shim-run-');
+  fs.writeFileSync(path.join(dir, 'pnpm.cmd'), shimText('npm-global-mexc.cmd'));
+  fs.writeFileSync(path.join(dir, 'odd.cmd'), '@echo off\r\nnode "%~dp0\\odd.js" %*\r\n');
+  // PATHEXT in the files' own case: resolveOnPath keeps PATHEXT's spelling, and
+  // a case-sensitive host would otherwise find nothing.
+  const env = { PATH: dir, PATHEXT: '.cmd' };
+  const calls = [];
+  const spawnSync = (file, args, options) => {
+    calls.push({ file, args, options });
+    return { status: 0, stdout: '', stderr: '' };
+  };
+
+  manager.run('pnpm', ['root', '--global'], { env, spawnSync, timeout: 1234 });
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].file, process.execPath);
+  assert.deepEqual(calls[0].args, [path.join(dir, 'node_modules', '@mexc-ai', 'cli', 'bin', 'launcher.cjs'), 'root', '--global']);
+  assert.ok(!calls[0].options.shell, 'a shim npm wrote ran under cmd.exe anyway');
+  assert.equal(calls[0].options.timeout, 1234, 'the timeout now reaches the manager itself');
+
+  // A batch file npm did not write keeps the old path: resolved, quoted, shell.
+  manager.run('odd', [], { env, spawnSync });
+  assert.equal(calls[1].file, `"${path.join(dir, 'odd.cmd')}"`);
+  assert.equal(calls[1].options.shell, true);
+});

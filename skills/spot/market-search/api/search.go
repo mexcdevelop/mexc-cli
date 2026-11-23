@@ -1,10 +1,11 @@
-// Package marketsearchapi declares signed operations for spot market support.
+// Package marketsearchapi declares the spot market support search. It is
+// public: unsigned, with no identity, so the search runs anonymously and the
+// upstream's personalised categories (prediction markets above all) come back
+// as the anonymous view.
 package marketsearchapi
 
 import (
-	"github.com/mexcdevelop/mexc-cli/identity"
 	"github.com/mexcdevelop/mexc-cli/pkg/api"
-	"github.com/mexcdevelop/mexc-cli/signing"
 )
 
 var booleanValues = []string{"true", "false"}
@@ -25,7 +26,7 @@ func Operations() []api.Operation {
 				{Name: "keyword", Desc: "Search keyword; at most 100 characters (a longer one returns an empty result upstream without an error)", Required: true, MaxLen: 100},
 				{Name: "labels", Desc: "Include labels in the result (default false); labelRelatedProducts is computed only when this and coinLabel are both true", Enum: booleanValues},
 				{Name: "coinLabel", Desc: "Include coin labels in the result (default false)", Enum: booleanValues},
-				{Name: "predict", Desc: "Include prediction-market results (default false); requires a logged-in account, otherwise this category is always empty", Enum: booleanValues},
+				{Name: "predict", Desc: "Include prediction-market results (default false); they need a logged-in account and this search is anonymous, so the category is always empty here", Enum: booleanValues},
 			},
 		},
 	}
@@ -33,6 +34,8 @@ func Operations() []api.Operation {
 
 const Scope = "spot.market-search"
 
-const Signed = signing.CliHMAC
+// Signed is this subdomain's default: unsigned — the search is public.
+const Signed = api.SignNone
 
-const Identity = identity.OpenAPI
+// Identity is this subdomain's default: no identity.
+const Identity = api.IdentityNone

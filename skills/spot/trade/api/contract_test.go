@@ -1,6 +1,7 @@
 package tradeapi
 
 import (
+	"errors"
 	"os"
 	"regexp"
 	"strconv"
@@ -8,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/mexcdevelop/mexc-cli/pkg/api"
+	"github.com/mexcdevelop/mexc-cli/pkg/errs"
 	"github.com/mexcdevelop/mexc-cli/signing"
 )
 
@@ -232,41 +234,170 @@ func TestBodies_DedupeKeyIsClientOrderIDOnly(t *testing.T) {
 	}
 }
 
-// Contract: cancel's Summary spells out the account-wide mode, and every
-// selector stays optional.
-//
-// The two facts belong together. All four modes are chosen by which params are
-// PRESENT, and the widest one is selected by supplying NOTHING — which is why
-// every param is optional, and which also means the confirmation prompt for
-// "cancel this order" and the one for "empty the account" differ only in that the
-// second lists no params. The Summary is the only line the prompt shows on its
-// own (confirmDisplay titles the prompt with it), so it is the only place that can
-// tell the user the account-wide form exists before they approve one.
-//
-// This is the ceiling of what a declaration can do here: it cannot say which mode
-// THIS call selected, so a param dropped on a retry still widens the reach with
-// nothing in the prompt to mark it. SKILL.md carries that warning for the agent.
-func TestCancel_SummarySpellsOutTheAccountWideMode(t *testing.T) {
-	var cancel api.Operation
+// cancelOp returns the cancel declaration, failing the test when it is missing.
+func cancelOp(t *testing.T) api.Operation {
+	t.Helper()
 	for _, op := range Operations() {
 		if op.Name == "cancel" {
-			cancel = op
+			return op
 		}
 	}
-	if cancel.Name == "" {
-		t.Fatal("spot.trade must declare a cancel op")
+	t.Fatal("spot.trade must declare a cancel op")
+	return api.Operation{}
+}
+
+// Contract: the account-wide cancel has to be asked for by name.
+//
+// All four modes are chosen by which params are PRESENT, and the backend's
+// account-wide form is the request with no selector at all. Left at that, a
+// selector dropped on a retry widened a one-order cancel into every open order,
+// and the confirmation prompt — titled with the Summary, listing only the params
+// supplied — showed the widest call with the fewest lines. So:
+//   - a call with no selector is refused (filters alone do not select anything);
+//   - the account is reached only through the `all` switch, which the prompt
+//     lists as `all  true` and which is never sent;
+//   - `all` cannot ride along with a selector, which would mean two scopes;
+//   - the selectors keep their backend precedence among themselves.
+//
+// The Summary still names the widest mode first: it is the prompt's title and the
+// hint the refusal carries.
+func TestCancel_AccountWideModeIsNamedNotImplied(t *testing.T) {
+	cancel := cancelOp(t)
+
+	for _, want := range []string{"--all", "every open order"} {
+		if !strings.Contains(cancel.Summary, want) {
+			t.Errorf("cancel's summary must mention %q — it titles the confirmation "+
+				"prompt and is the refusal's hint: %q", want, cancel.Summary)
+		}
+	}
+	var all *api.Param
+	for i, p := range cancel.Params {
+		if p.Required {
+			t.Errorf("cancel --%s must stay optional: the mode is chosen by which "+
+				"params are present", p.Name)
+		}
+		if p.Name == "all" {
+			all = &cancel.Params[i]
+		}
+	}
+	if all == nil || !all.Switch {
+		t.Fatal("cancel must declare `all` as a Switch: the account-wide mode is " +
+			"named, and the name is never sent")
 	}
 
-	for _, want := range []string{"no parameters", "every open order"} {
-		if !strings.Contains(cancel.Summary, want) {
-			t.Errorf("cancel's summary must mention %q — it is the only line the "+
-				"confirmation prompt shows on its own: %q", want, cancel.Summary)
+	selectors := []string{"triggerId", "orderId", "symbol", "symbolId"}
+	wantOneOf := append(append([]string{}, selectors...), "all")
+	if strings.Join(cancel.RequireOneOf, ",") != strings.Join(wantOneOf, ",") {
+		t.Errorf("cancel RequireOneOf = %v, want %v (the filters select nothing on "+
+			"their own)", cancel.RequireOneOf, wantOneOf)
+	}
+	pairs := map[string]bool{}
+	for _, g := range cancel.Exclusive {
+		if len(g) == 2 && g[0] == "all" {
+			pairs[g[1]] = true
+		} else {
+			t.Errorf("cancel Exclusive group %v: only `all` is paired against a selector; "+
+				"the selectors keep their backend precedence", g)
 		}
 	}
-	for _, p := range cancel.Params {
-		if p.Required {
-			t.Errorf("cancel --%s must stay optional: all four modes are selected by "+
-				"which params are present", p.Name)
+	for _, s := range selectors {
+		if !pairs[s] {
+			t.Errorf("cancel must refuse `all` together with --%s", s)
+		}
+	}
+}
+
+// Contract: the rule holds at runtime, the way both faces call it, and the
+// account-wide request is exactly what it was before the switch existed.
+func TestCancel_ValidateAndRequest(t *testing.T) {
+	cancel := cancelOp(t)
+	cases := []struct {
+		name    string
+		values  map[string]string
+		subtype string // "" = accepted
+	}{
+		{"nothing", map[string]string{}, "missing_argument"},
+		{"filters alone", map[string]string{"orderTypes": "100", "tradeType": "2"}, "missing_argument"},
+		{"all", map[string]string{"all": "true"}, ""},
+		{"all with filters", map[string]string{"all": "true", "orderTypes": "100,103", "tradeType": "2"}, ""},
+		{"all with orderId", map[string]string{"all": "true", "orderId": "C02__1"}, "invalid_argument"},
+		{"all with symbol", map[string]string{"all": "true", "symbol": "BTC_USDT"}, "invalid_argument"},
+		{"one order", map[string]string{"orderId": "C02__1"}, ""},
+		{"one pair filtered", map[string]string{"symbol": "BTC_USDT", "tradeType": "1"}, ""},
+		{"precedence kept", map[string]string{"triggerId": "1", "orderId": "2"}, ""},
+	}
+	for _, c := range cases {
+		err := cancel.Validate(c.values)
+		var e *errs.Error
+		switch {
+		case c.subtype == "" && err != nil:
+			t.Errorf("%s: want accepted, got %v", c.name, err)
+		case c.subtype != "" && (!errors.As(err, &e) || e.Subtype != c.subtype):
+			t.Errorf("%s: want %s, got %v", c.name, c.subtype, err)
+		}
+	}
+
+	spec, err := cancel.BuildSpec(map[string]string{"all": "true", "orderTypes": "100"}, "", nil, Signed, Identity, "openapi")
+	if err != nil {
+		t.Fatalf("BuildSpec: %v", err)
+	}
+	if _, sent := spec.Query["all"]; sent {
+		t.Errorf("`all` must never be sent, got query %v", spec.Query)
+	}
+	if len(spec.Query) != 1 || spec.Query["orderTypes"] != "100" {
+		t.Errorf("--all --orderTypes 100 must send exactly orderTypes=100, got %v", spec.Query)
+	}
+}
+
+// amountFields are the body fields that carry a price, quantity or amount. Each
+// one must be a positive decimal, refused locally otherwise.
+var amountFields = map[string]bool{
+	"price": true, "quantity": true, "amount": true,
+	"triggerPrice": true, "triggerLimitPrice": true,
+	"profitTriggerPrice": true, "loseTriggerPrice": true, "trackActivePrice": true,
+}
+
+// Contract: every amount field of every body carries decimal:"positive", so a
+// negative, zero, empty or null amount is refused before anything is sent — on a
+// dry-run too, where body_checked used to come back true for quantity "-1".
+// Keyed on the wire name, so a new placement op inherits the rule by naming its
+// fields the way the others do.
+func TestBodies_AmountsArePositiveDecimals(t *testing.T) {
+	tagged := 0
+	for _, op := range Operations() {
+		for _, f := range op.BodyFields() {
+			if !amountFields[f.Name] {
+				continue
+			}
+			tagged++
+			if f.Decimal != api.DecimalPositive {
+				t.Errorf("%s.%s must carry decimal:%q, got %q", op.Name, f.Name, api.DecimalPositive, f.Decimal)
+			}
+		}
+	}
+	if tagged != 22 {
+		t.Errorf("found %d amount fields across the bodies, want 22 — update this count "+
+			"deliberately when a body gains or loses one", tagged)
+	}
+
+	place := func(quantity string) string {
+		return `{"currency":"BTC","market":"USDT","price":"60000","quantity":` + quantity +
+			`,"tradeType":"BUY","orderSource":"CLI"}`
+	}
+	var op api.Operation
+	for _, o := range Operations() {
+		if o.Name == "place" {
+			op = o
+		}
+	}
+	for _, bad := range []string{`"-1"`, `"0"`, `"0.0"`, `""`, `null`, `"abc"`, `"1e3"`, `".5"`, `"5."`, `"+1"`, `" 1"`} {
+		if err := op.ValidateBody(place(bad)); err == nil {
+			t.Errorf("place with quantity %s must be refused", bad)
+		}
+	}
+	for _, good := range []string{`"0.001"`, `"1"`, `"01.50"`} {
+		if err := op.ValidateBody(place(good)); err != nil {
+			t.Errorf("place with quantity %s must pass, got %v", good, err)
 		}
 	}
 }

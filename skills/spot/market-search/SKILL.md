@@ -1,15 +1,15 @@
 ---
 name: mexc-spot-market-search
 scope: spot.market-search
-signed: yes
-identity: yes
+signed: no
+identity: no
 visibility: public
-description: Search spot-market coins, trading pairs, and related entities through the CLI gateway route declaration. Requires a saved API credential profile and signed CLI requests. Use it when an agent needs to resolve a user query before choosing a market-data operation.
+description: Search spot-market coins, trading pairs, and related entities through the CLI gateway route declaration. Public, needs no saved profile. Use it when an agent needs to resolve a user query before choosing a market-data operation.
 ---
 
 # spot · market-search
 
-> The market-search subdomain reaches the market-support search endpoint through the isolated `/api/cli/spot/**` gateway namespace. Its operation requires a saved API credential profile and signed CLI request. On a structured credential error, load the `mexc-auth` skill; that skill owns the exact subtype/message/recovery. Common error/safety rules → load the `mexc-common` skill. Then replay; this skill does not describe login.
+> The market-search subdomain reaches the market-support search endpoint through the isolated `/api/cli/spot/**` gateway namespace. Its operation is a public read: it needs no saved API credential profile and sends no API key or signature, so the search runs anonymously. Common error rules → load the `mexc-common` skill.
 
 ## Core Concepts
 
@@ -26,7 +26,8 @@ description: Search spot-market coins, trading pairs, and related entities throu
 Category presence is conditional, and an **absent** key is not the same as an empty one:
 
 - `labelRelatedProducts` is computed only when `--labels true` **and** `--coinLabel true`; otherwise the key is absent.
-- `predicts` requires `--predict true` **and** a logged-in account; otherwise it is empty.
+- `predicts` needs a logged-in account, and this search is anonymous, so it is always empty here — `--predict true` does not change that. Do not read an empty `predicts` as "no prediction market matches".
+- Categories that are personalised upstream (activities, contract copies, finances and the like) are the anonymous view, not the caller's own.
 - `labels` / `coinLabel` are empty unless the matching flag is set.
 - `finances` and `convertTokens` are driven by `--coinId` / `--currency`, not by `--keyword`, so they can be populated for an empty keyword and empty for a matching one.
 - A category whose backing service failed is **omitted entirely** rather than returned empty — absent means unknown, not "none".
@@ -40,7 +41,7 @@ Category presence is conditional, and an **absent** key is not the same as an em
 
 | Command | scope | access | signed | identity | idempotent | Endpoint | Description |
 |---|---|---|---|---|---|---|---|
-| `mexc spot market-search global-search` | `spot.market-search` | read | yes | yes | yes | `GET /api/cli/spot/market-support/global/search` | Global search across coins, trading pairs, and supported market entities |
+| `mexc spot market-search global-search` | `spot.market-search` | read | no | no | yes | `GET /api/cli/spot/market-support/global/search` | Global search across coins, trading pairs, and supported market entities |
 
 ## Permissions
 
@@ -56,6 +57,6 @@ mexc spot market-search global-search --keyword BTC --currency USDT --language e
 
 ## Notes for Agents
 
-- This subdomain requires a saved API credential profile. Configure and select a profile before a real call; the framework then applies the required authentication and signing for the gateway route.
+- This subdomain is public: no saved profile is needed, and a saved one is not used.
 - Inspect the operation schema before calling when a filter or header is uncertain: `mexc schema spot.market-search.global-search`.
 - The operation is read-only and idempotent.

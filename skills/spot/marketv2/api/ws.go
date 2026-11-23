@@ -6,12 +6,9 @@
 // mexc-ws skill, not repeated per operation.
 //
 // All three are public channels (no credentials): the exchange's spot v3
-// public WS gateway needs no signature or login at all, unlike this
-// subdomain's REST operations (which sign against the CLI gateway).
-// So every op here explicitly overrides Signed/Identity to none rather than
-// inheriting marketv2's subdomain defaults (signing.CliHMAC /
-// identity.OpenAPI) — an intentional, per-op opt-out, not an omission. Their WSCollect closures ignore the apiKey/secretKey
-// arguments entirely for the same reason.
+// public WS gateway needs no signature or login at all. They inherit the
+// subdomain defaults, which are unsigned with no identity, and their WSCollect
+// closures ignore the apiKey/secretKey arguments for the same reason.
 package marketv2api
 
 import (
@@ -44,12 +41,10 @@ const spotAggreInterval = "100ms"
 func wsOperations() []api.Operation {
 	return []api.Operation{
 		{
-			Name:     "ws-ticker",
-			Kind:     api.KindWSCollect,
-			Signed:   api.SignNone,
-			Identity: api.IdentityNone,
-			Access:   api.Read,
-			Summary:  "Subscribe to real-time best bid/ask ticker pushes for a symbol (WS, public, no auth)",
+			Name:    "ws-ticker",
+			Kind:    api.KindWSCollect,
+			Access:  api.Read,
+			Summary: "Subscribe to real-time best bid/ask ticker pushes for a symbol (WS, public, no auth)",
 			Params: []api.Param{
 				{Name: "symbol", Required: true, Desc: "Trading pair, e.g. BTCUSDT"},
 			},
@@ -63,12 +58,10 @@ func wsOperations() []api.Operation {
 			},
 		},
 		{
-			Name:     "ws-depth",
-			Kind:     api.KindWSCollect,
-			Signed:   api.SignNone,
-			Identity: api.IdentityNone,
-			Access:   api.Read,
-			Summary:  "Subscribe to real-time incremental order-book depth pushes for a symbol (WS, public, no auth)",
+			Name:    "ws-depth",
+			Kind:    api.KindWSCollect,
+			Access:  api.Read,
+			Summary: "Subscribe to real-time incremental order-book depth pushes for a symbol (WS, public, no auth)",
 			Params: []api.Param{
 				{Name: "symbol", Required: true, Desc: "Trading pair, e.g. BTCUSDT"},
 			},
@@ -82,12 +75,10 @@ func wsOperations() []api.Operation {
 			},
 		},
 		{
-			Name:     "ws-trades",
-			Kind:     api.KindWSCollect,
-			Signed:   api.SignNone,
-			Identity: api.IdentityNone,
-			Access:   api.Read,
-			Summary:  "Subscribe to real-time trade (new-deal) pushes for a symbol (WS, public, no auth)",
+			Name:    "ws-trades",
+			Kind:    api.KindWSCollect,
+			Access:  api.Read,
+			Summary: "Subscribe to real-time trade (new-deal) pushes for a symbol (WS, public, no auth)",
 			Params: []api.Param{
 				{Name: "symbol", Required: true, Desc: "Trading pair, e.g. BTCUSDT"},
 			},

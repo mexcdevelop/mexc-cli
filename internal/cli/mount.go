@@ -210,6 +210,14 @@ func validateBuildVersionHeader(ds []api.DomainSpec, name string) error {
 
 // mountGroup creates an intermediate node (domain / subdomain) command and
 // attaches the unknown-subcommand guard.
+// Command annotations the help renderer reads to withhold writes under
+// --read-only (see hideWritesForReadOnly). Only the tree mounted from the domain
+// registry carries them, so a builtin group is never hidden by accident.
+const (
+	annotationWrite   = "mexc.write"    // on the leaf command of a write operation
+	annotationOpGroup = "mexc.op-group" // on a domain or subdomain group of operations
+)
+
 func mountGroup(use, short string, f *Factory, fe *finalErr) *cobra.Command {
 	c := &cobra.Command{Use: use, Short: short}
 	guardGroup(c, f, fe)
@@ -234,6 +242,7 @@ func NewGroup(use, short string, writeErr func(error)) *cobra.Command {
 // schema command come from the same domains() registry, so they cannot drift.
 func mountDomain(d api.DomainSpec, f *Factory, fe *finalErr) *cobra.Command {
 	group := mountGroup(d.Name, d.Short, f, fe)
+	group.Annotations = map[string]string{annotationOpGroup: "true"}
 	for _, sd := range d.Subs {
 		mountSubdomain(group, sd, f, fe)
 	}
@@ -248,6 +257,7 @@ func mountDomain(d api.DomainSpec, f *Factory, fe *finalErr) *cobra.Command {
 // (captured by closure), preventing shared mutable state across commands.
 func mountSubdomain(parent *cobra.Command, sd api.Subdomain, f *Factory, fe *finalErr) {
 	sub := mountGroup(sd.Name, sd.Short, f, fe)
+	sub.Annotations = map[string]string{annotationOpGroup: "true"}
 	for _, op := range sd.Ops {
 		sub.AddCommand(newOperationCmd(op, effectiveSigned(op, sd), effectiveIdentity(op, sd), effectiveHostKey(op, sd), f, fe))
 	}
@@ -262,6 +272,9 @@ func newOperationCmd(op api.Operation, effSigned api.Signing, effIdentity api.Id
 	// Each command owns its own values map to avoid cross-command sharing (a
 	// pitfall of the old implementation).
 	values := make(map[string]*string, len(op.Params))
+	// switches backs the Switch params, which are bool flags (a bare --<name>)
+	// rather than string ones; collected as "true" when set, absent otherwise.
+	switches := map[string]*bool{}
 	// dataPtr backs the --data flag, registered for operations that declare a
 	// JSON Body or a Multipart with companion text fields. filePtr backs the
 	// repeatable --file flag, registered only for Multipart operations. Both are
@@ -294,9 +307,14 @@ func newOperationCmd(op api.Operation, effSigned api.Signing, effIdentity api.Id
 		Use:   op.Name,
 		Short: op.Summary,
 		RunE: func(c *cobra.Command, _ []string) error {
-			collected := make(map[string]string, len(values))
+			collected := make(map[string]string, len(values)+len(switches))
 			for name, ptr := range values {
 				collected[name] = *ptr
+			}
+			for name, on := range switches {
+				if *on {
+					collected[name] = "true"
+				}
 			}
 			// Framework-level validation (required / enum) applies to a
 			// KindWSCollect operation's params exactly as to any other
@@ -437,7 +455,16 @@ func newOperationCmd(op api.Operation, effSigned api.Signing, effIdentity api.Id
 		},
 	}
 
+	if op.IsWrite() {
+		cmd.Annotations = map[string]string{annotationWrite: "true"}
+	}
 	for _, p := range op.Params {
+		if p.Switch {
+			on := new(bool)
+			switches[p.Name] = on
+			cmd.Flags().BoolVar(on, p.Name, false, p.Desc)
+			continue
+		}
 		ptr := new(string)
 		values[p.Name] = ptr
 		cmd.Flags().StringVar(ptr, p.Name, "", p.Desc)

@@ -72,8 +72,8 @@ Order
 │           └── stop-limit leg                 activates at triggerPrice -> triggerLimitPrice
 ├── modify                 cancel-and-replace a resting limit order
 │                          (access: write, non-idempotent, DESTRUCTIVE, new order id)
-├── cancel                 one plan order | one order | one pair | whole account
-│                          (access: write, idempotent; scope = which params you send)
+├── cancel                 one plan order | one order | one pair | whole account (--all)
+│                          (access: write, idempotent; scope = which selector you send)
 ├── one order              deal-detail     detail + fills; the only single-order lookup,
 │                                          and the only op keyed by triggerId  (access: read)
 ├── order lists            current-orders  open: INACTIVE / NEW / PARTIALLY_FILLED
@@ -88,7 +88,7 @@ Order
 - **Reads and writes in the same domain**: the action is in the access column; scope is always the resource `spot.trade`.
 - **Write semantics differ**: every placement (`place`, `place-market`, `place-trigger`, `place-market-trigger`, `place-track`, `place-oco`) and `modify` are **non-idempotent**, so they are **never auto-retried** on a transient failure — a lost response could mean the order already landed. `cancel` is **idempotent** (safe to repeat). Declared in `./api/trade.go`; feeds the MCP safety hints. Note that idempotent says nothing about **scope** — `cancel` covers anything from one order to the whole account depending on its parameters, so read its block below before calling it.
 - **`modify` is the only destructive write** — see its block below before using it.
-- **Before placing an order**, fetch the pair's order limits/precision with `spot marketv2 symbol-trade` and the current price with `spot marketv2 ticker`. Both take the **separator** symbol (`BTC_USDT`) — the same spelling this subdomain uses, not the joined form their own `--symbol` help text suggests — and both are signed gateway reads, so they need the credential this subdomain already requires; there is no credential-free way to look this up.
+- **Before placing an order**, fetch the pair's order limits/precision with `spot marketv2 symbol-trade` and the current price with `spot marketv2 ticker`. Both take the **separator** symbol (`BTC_USDT`) — the same spelling this subdomain uses, not the joined form their own `--symbol` help text suggests — and both are public reads that need no credential.
 - **No batch placement.** There is no multi-order endpoint here, so every placement is one order per call; place N orders with N calls (and remember none of them is auto-retried).
 - **Quote-amount sizing works for market orders only.** `amount` (a quote-asset size) is declared on exactly three operations — `place-market`, `place-market-trigger`, and `place-track` as `TRACK_MARKET_ORDER` — so "spend 100 USDT on BTC" is expressible directly on those. A **limit** order has no such field — for `place` you must convert to a base `quantity` yourself: fetch the price with `spot marketv2 ticker`, divide, and truncate to the pair's quantity precision from `spot marketv2 symbol-trade`. State the computed quantity when you confirm with the user, since that rounding is yours, not the exchange's.
 - **History reach is an account-level cap, not a fixed window** — see the listing section below. There is no documented "last N days" constant to plan around: the backend refuses queries that reach too far back rather than truncating them.
@@ -102,11 +102,11 @@ Order
 1. `triggerId` present → cancel **that one plan/trigger order**. Wins even if `orderId` is also sent.
 2. else `orderId` present → cancel **that one order**. If no such spot order exists, the value is retried as a `triggerId`.
 3. else `symbolId` (preferred) or `symbol` present → cancel **that pair's** open orders, optionally narrowed by `tradeType` / `orderTypes`.
-4. else nothing present → cancel **every open order in the account, across all pairs**. This is the endpoint's designed "cancel everything" form, not an error.
+4. `--all` → cancel **every open order in the account, across all pairs**, optionally narrowed by `tradeType` / `orderTypes`. `--all` takes no value and cannot be combined with `triggerId`, `orderId`, `symbol` or `symbolId`.
 
-Because the scope is chosen by presence rather than by an explicit mode flag, **a parameter that goes missing silently widens the scope** — dropping `symbol` on a retry turns a one-pair cancel into an account-wide one. Keep the parameter set stable across retries, and state the mode you are invoking when you confirm with the user.
+**A call that names no mode is refused, not widened.** `cancel` with no selector — including one that carries only `tradeType` / `orderTypes` — fails locally with `missing_argument` and sends nothing; the account-wide form exists only as `--all`. So a selector lost on a retry costs an error instead of every open order. Still keep the parameter set stable across retries: the selectors keep their precedence, so a call that loses `--orderId` while still carrying `--symbol` widens from one order to that pair. State the mode you are invoking when you confirm with the user.
 
-**The confirmation prompt does NOT name the mode for you.** It shows the operation summary — which has to enumerate all four — and then the parameters you sent, so mode 4 and mode 2 differ only in that mode 4 lists none. Mode 4 is confirmed exactly like the other three (`cancel` is a Light write: repeating it converges). So state the mode explicitly when you ask the user, and read the parameter list back as the check that nothing went missing before you relay anything.
+**The confirmation prompt lists the parameters you sent** under the operation summary: an account-wide cancel shows `all  true`, a single cancel shows its id. Read that list back as the check that the mode is the one the user asked for. `cancel` is a Light write in every mode (repeating it converges), so the prompt wording does not change with the scope — the parameter list is what tells the modes apart.
 
 **Cancel by `orderId`, uniformly — including for plan/trigger orders.** `current-orders` does **not** return a `triggerId` on its rows, so the only id you can act on is the `orderId` it gives you, and that id cancels every kind of order here: an `INACTIVE` pre-created plan order as much as a live `NEW` one. Do not go looking for a `triggerId` to cancel with; there is nowhere to read one from.
 
@@ -115,7 +115,7 @@ Because the scope is chosen by presence rather than by an explicit mode flag, **
 **Two things `cancel` cannot do:**
 
 - **Cancel by `origClientOrderId`.** The gateway endpoint takes no client-order-id parameter at all, so a client id must first be resolved to an exchange `orderId` — list with `current-orders` and match on the returned rows before cancelling.
-- **Cancel several symbols in one call.** `symbol` is a single pair, so N pairs means N calls — or the account-wide form if that is genuinely what the user wants.
+- **Cancel several symbols in one call.** `symbol` is a single pair, so N pairs means N calls — or `--all` if the account-wide form is genuinely what the user wants.
 
 **The two batch filters are integer CODES, not names** — the opposite of `deal-detail`'s `orderType`, which is a name. Mixing them up is the easy mistake here:
 
@@ -191,7 +191,7 @@ Other things to expect from `deal-detail`:
 Backend-enforced; a violation is a rejected request, not a silent adjustment.
 
 - **`clientOrderId` is the only dedupe key, and it is optional — so the protection exists only when you supply it.** The backend dedupes a placement on `clientOrderId` + member: a resend carrying the same value is **refused as a duplicate** rather than placed twice, which is what turns an ambiguous timeout into something recoverable. Send a value that is unique per intended order, decide it **before** the first attempt, and reuse it verbatim on any resend of that order — regenerating it while rebuilding the body silently discards the protection. Never reuse one across two different orders. A `duplicate` rejection means the earlier attempt landed: re-query for the `orderId` instead of retrying under a new id. A placement sent **without** the field has no key and no safe resend. **`place-trigger` is the exception** — it does not accept the field at all, so no `place-trigger` call is safely resendable. Note that supplying the key does **not** make the operation auto-retryable: every placement stays `idempotent = no` in the table below, because the CLI cannot know whether a given call carried a key and must never resend one on its own.
-- **Decimal bounds**: every price/quantity/amount must be **> 0**, with at most **35 integer digits and 30 decimal places**. Values are truncated **down** to the pair's price/quantity precision, so read it from `spot marketv2 symbol-trade` first.
+- **Decimal bounds**: every price/quantity/amount must be **> 0**, with at most **35 integer digits and 30 decimal places**. Values are truncated **down** to the pair's price/quantity precision, so read it from `spot marketv2 symbol-trade` first. The CLI itself refuses a value that is not a plain decimal above zero — zero, negative, empty, `null`, a sign, an exponent, `.5` or `5.` — before anything is sent, `--dry-run` included; the digit limits and the pair's precision are left to the backend.
 - **Account eligibility**: some accounts are not eligible for the conditional and TP/SL paths and are refused outright — an account state, not a malformed request. Placement is also refused while a batch-cancel is in progress on the account, and per-symbol placement is rate limited.
 - **Availability**: OCO, stop-market and trailing orders can each be unavailable — for the whole market, for your account, or for one trading pair. When one is unavailable the call is rejected as an invalid/unsupported order type — that is a configuration state, not a malformed request, so do not retry or reshape the body.
 - **Market must be open**: the trigger, trailing and OCO paths need a latest traded price, so they are refused before a market opens.
@@ -268,7 +268,7 @@ Backend-enforced; a violation is a rejected request, not a silent adjustment.
 | `mexc spot trade place-market` | `spot.trade` | write | yes  | yes | no  | `POST /api/cli/spot/v4/order/place` | Place a **MARKET** order — no price; size it with `quantity` (base) **or** `amount` (quote, e.g. spend 100 USDT) |
 | `mexc spot trade place` | `spot.trade` | write | yes | yes | no | `POST /api/cli/spot/order/place` | Place an order with an optional take-profit and/or stop-loss attached (body on `--data`) |
 | `mexc spot trade modify` | `spot.trade` | write | yes | yes | no | `POST /api/cli/spot/order/modify` | Modify a resting limit order's price/quantity — cancel-and-replace, returns a new order id (body on `--data`) |
-| `mexc spot trade cancel`      | `spot.trade` | write | yes  | yes | yes | `DELETE /api/cli/spot/order/cancel/v2` | Cancel one plan order (`--triggerId`), one order (`--orderId`), one pair (`--symbol` + optional side/type filters), or — with no parameters — the whole account |
+| `mexc spot trade cancel`      | `spot.trade` | write | yes  | yes | yes | `DELETE /api/cli/spot/order/cancel/v2` | Cancel every open order in the account (`--all`, optional side/type filters), one pair (`--symbol` + optional filters), one order (`--orderId`) or one plan order (`--triggerId`); a call naming none of them is refused |
 | `mexc spot trade current-orders` | `spot.trade` | read | yes | yes | yes | `GET /api/cli/spot/order/current/orders/v2` | List OPEN orders, paged, with type/side/state/pair/time filters |
 | `mexc spot trade history-orders` | `spot.trade` | read | yes | yes | yes | `GET /api/cli/spot/order/history/orders/v2` | List FINISHED orders, paged, same filters as `current-orders` |
 | `mexc spot trade deals`       | `spot.trade` | read  | yes  | yes | yes | `GET /api/cli/spot/deal/deals` | List fills (trade history), paged, by pair / side / time |
@@ -404,12 +404,12 @@ Responses spell the pair as `BTC_USDT`; do not feed a returned `symbol` back in 
    ⚠️ **Always cancel by `--orderId`**, including for take-profit / stop-loss and trailing orders that have not
    triggered yet — they are cancelled by order id as well, not by a trigger id.
    - one order → `mexc spot trade cancel --orderId <id from step 1>`
-   - in bulk by type → `mexc spot trade cancel --orderTypes <comma-separated type codes>`; `orderTypes` takes
-     **type codes, not type names**. **Sending neither an id nor a pair cancels the entire account**, which is a
-     vastly different scope.
+   - this pair, in bulk by type → `mexc spot trade cancel --symbol <symbol from step 1> --orderTypes <comma-separated type codes>`;
+     `orderTypes` takes **type codes, not type names**. Without `--symbol` the call is refused; the account-wide form
+     is `--all --orderTypes <codes>`, a vastly different scope — use it only when the user asked for every pair.
        ↓ step 2 is a write: state which scope this cancel uses and what exactly it targets, then wait for explicit
-       confirmation before running; on a retry keep the parameter set identical, because dropping one qualifier
-       silently widens a single cancel into a bulk one.
+       confirmation before running; on a retry keep the parameter set identical, because dropping `--orderId` while
+       `--symbol` is still present silently widens a single cancel into a bulk one.
 3. `mexc spot trade current-orders --currencyId <cd> --marketCurrencyId <mcd>` → whether the target left the open list;
    `mexc spot trade history-orders --currencyId <cd> --marketCurrencyId <mcd>` → the state it finished in.
    **This is the easiest step to draw a wrong conclusion from**:
@@ -453,14 +453,14 @@ from `mexc schema spot.trade.<op>`.
 **Skill-specific notes**
 - Implementation lives in `./api/trade.go` (descriptors only; the request and signing are delegated to the `pkg/` foundation).
 - In `--read-only` mode every write op is refused (all placements, `modify`, `cancel`); after a successful placement, confirm it with `spot trade deal-detail --orderId <id> --orderType <type>`, or list with `spot trade current-orders` when you do not hold the id.
-- **`cancel`'s scope is chosen by which parameters you send, so name the mode when you confirm.** One plan order (`--triggerId`), one order (`--orderId`), one pair (`--symbol`), or the whole account (no parameters — a legitimate "cancel everything" request). All four are intended, but they are very different in blast radius: tell the user which one you are about to run, and keep the parameter set stable across retries, since a dropped `--symbol` silently promotes a one-pair cancel to an account-wide one.
+- **`cancel`'s scope is chosen by which selector you send, so name the mode when you confirm.** One plan order (`--triggerId`), one order (`--orderId`), one pair (`--symbol`), or the whole account (`--all` — a legitimate "cancel everything" request). A call with no selector is refused rather than cancelling everything. All four are intended, but they are very different in blast radius: tell the user which one you are about to run, and keep the parameter set stable across retries.
 - **To cancel an unactivated plan/trigger order, use `cancel --triggerId`.** Passing its `orderId` instead is silently ineffective: the backend's dispatch chain only cancels track / OCO / `NEW` / `PARTIALLY_FILLED` orders, so an `INACTIVE` pre-created order matches nothing and no error is raised. Confirm with `deal-detail --orderId <triggerId> --orderType TRIGGER_ORDER` afterwards.
 - **`deal-detail` needs `orderType`, and getting it wrong returns nothing rather than an error.** `orderType` also decides what `orderId` means: `TRIGGER_ORDER` → pass the **`triggerId`** and it reads the plan-order table; any other value → pass the **spot order id**. An empty result means "not yours, not there, or the wrong orderType/id pairing" — not necessarily a missing order.
 - **After placing a trigger / trailing order, confirm it with the `triggerId` you were handed**: `deal-detail --orderId <triggerId> --orderType TRIGGER_ORDER`. Any other `orderType` expects the spot order id, which the placement did not return. The pre-created spot order does exist and shows up in `current-orders` in state `INACTIVE` ("not activated"), so `INACTIVE` is the expected healthy state before the trigger fires, not a problem to report.
 - **Choosing between the placement operations**: **limit** order, plain or carrying a take-profit/stop-loss → **`place`** (omit `profitTriggerPrice` / `loseTriggerPrice` for an ordinary one). **Market** order, or any order sized by quote amount ("spend 100 USDT") → **`place-market`**. Order that should only appear once a price is reached → `place-trigger` (then a limit order) or `place-market-trigger` (then a market order). Order that should follow the market → `place-track`. Two linked exit legs → `place-oco`.
 - **`modify` needs a confirmation step of its own.** It destroys the original order, and a partial failure can leave you with no order at all. Surface the old/new id pair to the user, and on any error re-query before acting.
 - Every placement takes a JSON body rather than flags. Build it from `mexc schema spot.trade.<op>`, never from guesswork: they use `currency` + `market` (or the id pair) instead of `symbol`, and `tradeType` instead of `side`. A plain limit buy is the first example below. Example shapes:
-- **`--dry-run` does check the body you hand it, so it is a real pre-flight for a placement.** The examples below carry `--dry-run` to show each shape without placing an order, and a `--data` passed with it is validated on the same required / enum / unknown-field rules a real call applies — a body missing `quantity`, sending `tradeType: LONG`, or naming a field that does not exist fails there instead of on the way to the exchange. Omitting `--data` is still fine, since a dry-run never demands what it was not given; the plan's `body_checked` tells you which happened (`true` = your payload was validated, `false` = there was nothing to validate). What a dry-run cannot check is the exchange's own business rules — balance, precision, whether a price crosses the book — so a green dry-run means the request is well-formed, not that it will be accepted.
+- **`--dry-run` does check the body you hand it, so it is a real pre-flight for a placement.** The examples below carry `--dry-run` to show each shape without placing an order, and a `--data` passed with it is validated on the same required / enum / unknown-field / positive-amount rules a real call applies — a body missing `quantity`, carrying `quantity: "-1"`, sending `tradeType: LONG`, or naming a field that does not exist fails there instead of on the way to the exchange. Omitting `--data` is still fine, since a dry-run never demands what it was not given; the plan's `body_checked` tells you which happened (`true` = your payload was validated, `false` = there was nothing to validate). What a dry-run cannot check is the exchange's own business rules — balance, precision, whether a price crosses the book — so a green dry-run means the request is well-formed, not that it will be accepted.
 
   ```bash
   # a PLAIN limit buy — no TP/SL attached. The everyday limit placement.
@@ -544,9 +544,10 @@ from `mexc schema spot.trade.<op>`.
   # market-data form: BTC_USDT here, BTCUSDT under `spot market`.
   mexc spot trade cancel --symbol BTC_USDT --tradeType 2 --orderTypes 100,103
 
-  # THE WHOLE ACCOUNT — every open order, all pairs. This is the intended form
-  # for "cancel all my orders"; just be sure that is what the user asked for.
-  mexc spot trade cancel
+  # THE WHOLE ACCOUNT — every open order, all pairs. --all is the only way to ask
+  # for it: `cancel` with no selector is refused. Be sure the user asked for every
+  # pair; add --tradeType / --orderTypes to narrow it.
+  mexc spot trade cancel --all
   ```
 
 - **Verifying a trigger / trailing order after placing it** — the placement returns a `triggerId`, which is the only handle you hold, so start there:

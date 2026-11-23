@@ -26,6 +26,18 @@ import (
 func (o Operation) Validate(values map[string]string) error {
 	for _, p := range o.Params {
 		v := values[p.Name]
+		if p.Switch {
+			// Both faces collect a switch as "true" or nothing. Anything else can only
+			// come from a caller building the values map itself, and it is refused
+			// rather than read as either answer.
+			if v != "" && v != "true" {
+				return errs.Validation(errs.SubtypeInvalidArgument,
+					"--%s is a switch and takes no value (got %q)", p.Name, v).
+					WithParam("--"+p.Name).
+					WithHint("pass --%s on its own to turn it on, or leave it out", p.Name)
+			}
+			continue
+		}
 		if p.Required && v == "" {
 			return errs.Validation(errs.SubtypeMissingArgument,
 				"required argument --%s is missing", p.Name).
@@ -62,7 +74,96 @@ func (o Operation) Validate(values map[string]string) error {
 			}
 		}
 	}
+	return o.checkParamGroups(values)
+}
+
+// checkParamGroups enforces RequireOneOf and Exclusive on the supplied values.
+//
+// A missing selector names no single param, because no single input failed: the
+// caller left all of them out. The hint is the operation's Summary, which for an
+// operation like this has to enumerate its modes, so the refusal tells the caller
+// exactly which call to make instead.
+func (o Operation) checkParamGroups(values map[string]string) error {
+	if len(o.RequireOneOf) > 0 {
+		supplied := false
+		for _, n := range o.RequireOneOf {
+			if values[n] != "" {
+				supplied = true
+				break
+			}
+		}
+		if !supplied {
+			return errs.Validation(errs.SubtypeMissingArgument,
+				"one of %s is required", flagList(o.RequireOneOf)).
+				WithHint("%s", o.Summary)
+		}
+	}
+	for _, group := range o.Exclusive {
+		var got []string
+		for _, n := range group {
+			if values[n] != "" {
+				got = append(got, n)
+			}
+		}
+		if len(got) > 1 {
+			together := flagList(got)
+			if len(got) == 2 {
+				together = "--" + got[0] + " and --" + got[1]
+			}
+			return errs.Validation(errs.SubtypeInvalidArgument,
+				"%s cannot be used together", together).
+				WithParam("--"+got[0]).
+				WithHint("they select different scopes; pass only one of %s", flagList(group))
+		}
+	}
 	return nil
+}
+
+// flagList renders param names as a comma-separated list of --flags.
+func flagList(names []string) string {
+	out := make([]string, len(names))
+	for i, n := range names {
+		out[i] = "--" + n
+	}
+	return strings.Join(out, ", ")
+}
+
+// describeValue renders a decoded body value for an error message: a string is
+// quoted so an empty or space-padded value is visible, and a JSON null reads as
+// null rather than Go's <nil>.
+func describeValue(v any) string {
+	switch x := v.(type) {
+	case nil:
+		return "null"
+	case string:
+		return strconv.Quote(x)
+	default:
+		return fmt.Sprint(x)
+	}
+}
+
+// isPositiveDecimal reports whether s is a plain decimal greater than zero:
+// one or more digits, optionally followed by one '.' and one or more digits,
+// with at least one non-zero digit anywhere. No sign, no exponent, no spaces,
+// no leading or trailing '.'. Leading and trailing zeros are fine ("01.50").
+func isPositiveDecimal(s string) bool {
+	intPart, frac, hasDot := strings.Cut(s, ".")
+	if intPart == "" || (hasDot && frac == "") {
+		return false
+	}
+	nonZero := false
+	for _, part := range []string{intPart, frac} {
+		for i := 0; i < len(part); i++ {
+			c := part[i]
+			if c < '0' || c > '9' {
+				return false
+			}
+			if c != '0' {
+				nonZero = true
+			}
+		}
+	}
+	return nonZero
 }
 
 // ValidateBody validates the raw --data JSON of a Body operation against its
@@ -356,6 +457,17 @@ func validateBodyFields(fields []BodyField, m map[string]any) error {
 				"body field %q value is not allowed", f.Name).
 				WithParam("--data").
 				WithHint("use one of: %s", joinEnum(f.Enum))
+		}
+		// Checked before the type switch below because that switch only looks at a
+		// value that decoded as a string, and a JSON null does not — it would walk
+		// straight past every string constraint and still count as present.
+		if f.Decimal == DecimalPositive {
+			if s, ok := v.(string); !ok || !isPositiveDecimal(s) {
+				return errs.Validation(errs.SubtypeInvalidArgument,
+					"body field %q must be a positive decimal string such as \"0.001\" (got %s)", f.Name, describeValue(v)).
+					WithParam("--data").
+					WithHint("%s", f.Desc)
+			}
 		}
 		// Pre-validation constraints, type-aware (mirrors enumAllows): numeric bounds
 		// on an integer/number field, length/pattern on a string field. The strict

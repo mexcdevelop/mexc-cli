@@ -346,6 +346,17 @@ func inputSchemaFor(op api.Operation, unattended bool) json.RawMessage {
 	props := map[string]any{}
 	var required []string
 	for _, p := range op.Params {
+		// A switch is a JSON boolean here, the counterpart of the CLI's bare
+		// --<name>. It is never required (ValidateDecl forbids it) and carries no
+		// string constraint, so it gets its own node.
+		if p.Switch {
+			prop := map[string]any{"type": "boolean"}
+			if p.Desc != "" {
+				prop["description"] = p.Desc
+			}
+			props[p.Name] = prop
+			continue
+		}
 		prop := map[string]any{"type": "string"}
 		if p.Desc != "" {
 			prop["description"] = p.Desc
@@ -428,6 +439,11 @@ func inputSchemaFor(op api.Operation, unattended bool) json.RawMessage {
 	return raw
 }
 
+// decimalShapePattern is the JSON Schema pattern published for a body field
+// tagged decimal:"positive": a plain decimal's shape. ValidateBody additionally
+// requires the value to be greater than zero.
+const decimalShapePattern = `^[0-9]+([.][0-9]+)?$`
+
 // bodyObjectSchema builds a JSON Schema `object` from a reflected body field
 // tree: each field becomes a property, and validate:"required" fields are listed
 // in required[]. Recurses through bodyFieldSchema for nested objects and arrays.
@@ -494,8 +510,15 @@ func bodyFieldSchema(f api.BodyField) map[string]any {
 			if f.MaxLen > 0 {
 				s["maxLength"] = f.MaxLen
 			}
-			if f.Pattern != "" {
+			switch {
+			case f.Pattern != "":
 				s["pattern"] = f.Pattern
+			case f.Decimal == api.DecimalPositive:
+				// The shape only — digits with an optional fraction. Greater-than-zero
+				// is left to ValidateBody, which is authoritative: the full rule as a
+				// regex costs every amount field ~60 characters of tool description, and
+				// a host that skips schema validation is refused there anyway.
+				s["pattern"] = decimalShapePattern
 			}
 		}
 		return s
@@ -628,7 +651,28 @@ func toolHandler(f *Factory, op api.Operation, effSigned api.Signing, effIdentit
 				delete(raw, "confirm")
 			}
 		}
-		args := make(map[string]string, len(raw))
+		// Switch params arrive as JSON booleans (inputSchemaFor publishes them that
+		// way) and are carried exactly as the CLI collects them: "true" when on,
+		// absent when off. Unlike `confirm`, a non-boolean is refused: a switch can
+		// widen what a call does, so a value that is neither answer must not be read
+		// as one.
+		switchArgs := map[string]string{}
+		for _, p := range op.Params {
+			v, ok := raw[p.Name]
+			if !p.Switch || !ok {
+				continue
+			}
+			var on bool
+			if err := json.Unmarshal(v, &on); err != nil {
+				return errorResult(errs.Validation(errs.SubtypeInvalidArgument,
+					"argument %q must be a boolean", p.Name).WithParam(p.Name).WithCause(err)), nil
+			}
+			if on {
+				switchArgs[p.Name] = "true"
+			}
+			delete(raw, p.Name)
+		}
+		args := make(map[string]string, len(raw)+len(switchArgs))
 		for k, v := range raw {
 			var s string
 			if err := json.Unmarshal(v, &s); err != nil {
@@ -636,6 +680,9 @@ func toolHandler(f *Factory, op api.Operation, effSigned api.Signing, effIdentit
 					"argument %q must be a string", k).WithParam(k).WithCause(err)), nil
 			}
 			args[k] = s
+		}
+		for k, v := range switchArgs {
+			args[k] = v
 		}
 		// Reject keys the operation did not declare. The CLI face can never carry
 		// an undeclared argument (only declared cobra flags populate its value
@@ -648,13 +695,17 @@ func toolHandler(f *Factory, op api.Operation, effSigned api.Signing, effIdentit
 			return errorResult(err), nil
 		}
 		// A Body op deep-validates the payload against the declared prototype
-		// (well-formed JSON, no unknown fields, required + enum), exactly like the
-		// CLI leaf command. Skipped under --dry-run, which previews request
-		// structure without requiring a filled-in body (mirrors the CLI).
-		if op.Body != nil && !f.DryRun() {
+		// (well-formed JSON, no unknown fields, required + enum + constraints),
+		// exactly like the CLI leaf command, including the dry-run rule: a dry-run
+		// checks the body it WAS GIVEN and never demands one it was not. Skipping a
+		// supplied body here used to report a green preview for a call already known
+		// to be rejectable — the gap the CLI face had closed and this one had not.
+		bodyChecked := false
+		if op.Body != nil && (!f.DryRun() || strings.TrimSpace(data) != "") {
 			if err := op.ValidateBody(data); err != nil {
 				return errorResult(err), nil
 			}
+			bodyChecked = true
 		}
 		// A write asks the user to confirm before it executes — skipped under
 		// --dry-run (a preview sends nothing, so there is nothing to confirm), and
@@ -732,6 +783,12 @@ func toolHandler(f *Factory, op api.Operation, effSigned api.Signing, effIdentit
 		// the plan (what would be sent), matching the CLI's dry-run output, instead
 		// of marshaling a nil dst into the literal "null".
 		if client.DryRun {
+			// Same answer the CLI's plan gives: only an op that has a body reports
+			// whether this preview checked one (multipart ops never reach this face).
+			if op.Body != nil {
+				checked := bodyChecked
+				plan.BodyChecked = &checked
+			}
 			body, _ := json.MarshalIndent(plan, "", "  ")
 			return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: string(body)}}}, nil
 		}

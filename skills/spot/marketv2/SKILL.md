@@ -1,15 +1,15 @@
 ---
 name: mexc-spot-marketv2
 scope: spot.marketv2
-signed: yes
-identity: yes
+signed: no
+identity: no
 visibility: public
-description: 'MEXC spot CLI market data (V2) — grouped symbol lists, market tickers, coin introductions and risk notes, concept plates, precision-limited depth, recent deals, and ranking markets. Public market-data operations need no saved profile; account-aware operations require a saved API credential profile and signed CLI requests. Triggers: "symbol list / grouped symbols", "market ticker", "coin introduction / risk", "concept plate / sector", "precision depth", "recent deals", "meme coins", "new coin list", "timezone list".'
+description: 'MEXC spot CLI market data (V2) — grouped symbol lists, market tickers, coin introductions and risk notes, concept plates, precision-limited depth, recent deals, and ranking markets. Every market-data operation needs no saved profile; only user-eftd-info (the caller''s own first-deposit eligibility) requires a saved API credential profile and a signed CLI request. Triggers: "symbol list / grouped symbols", "market ticker", "coin introduction / risk", "concept plate / sector", "precision depth", "recent deals", "meme coins", "new coin list", "timezone list".'
 ---
 
 # spot · marketv2 (CLI market data, V2)
 
-> CLI-gateway market data declarations. Most REST operations are public reads that need no saved API credential profile or signed request. `symbols`, `tickers`, `symbol-trade`, and `user-eftd-info` retain account-aware behavior and require a saved API credential profile. It targets `/api/cli/spot/market-v2`, which returns richer, display-oriented objects than a raw market feed: sectors, introductions, and rankings. On a structured credential error for a signed operation, load the `mexc-auth` skill; that skill owns the exact subtype/message/recovery. Common error/safety rules → load the `mexc-common` skill. Then replay; this skill does not describe login.
+> CLI-gateway market data declarations. Every market-data operation is a public read that needs no saved API credential profile or signed request. The one exception is `user-eftd-info`, which reads the caller's own first-deposit eligibility and requires a saved API credential profile. It targets `/api/cli/spot/market-v2`, which returns richer, display-oriented objects than a raw market feed: sectors, introductions, and rankings. On a structured credential error for a signed operation, load the `mexc-auth` skill; that skill owns the exact subtype/message/recovery. Common error/safety rules → load the `mexc-common` skill. Then replay; this skill does not describe login.
 
 ## Core Concepts
 
@@ -35,12 +35,12 @@ spot.marketv2
 
 ## Important Notes
 
-- **Authentication varies by operation**: `symbols`, `tickers`, `symbol-trade`, and `user-eftd-info` require a saved API credential profile and signed request. Every other REST operation listed below is public and does not send an API-key identity or request signature.
+- **Only `user-eftd-info` needs credentials**: it requires a saved API credential profile and a signed request. Every other operation, REST and WebSocket, is public and sends no API key or request signature.
 - **Locale/timezone are request headers**, exposed as flags: `--language` (default `en-US`), `--convertLanguage`, `--timezone` (default `UTC+8`). They are declared as header params, so a value is sent on the wire as a header, not a query key.
 - **`--symbol` or `--symbolId`**: `ticker`, `symbol-trade`, and (in `spot.kline`) the kline query accept either — pass exactly one. `depth` and `deals` key off `--symbolId`. `--symbol` must be BASE_QUOTE (e.g. `BTC_USDT`); `symbols` does not return this form pre-assembled — derive it as `vn` + `_` + the market group key (see Workflows).
 - **`coins-introduce` takes a list**: pass `--coinIds` as a comma-separated list, e.g. `--coinIds 128,129`.
-- **`ws-ticker`/`ws-depth`/`ws-trades` are public WebSocket subscriptions** against the exchange's spot v3 public gateway. Like the public REST operations, they need no saved credential profile; the four account-aware REST operations retain the subdomain default authentication behavior. See the `mexc-ws` skill for the shared `--listen-duration`/`--limit`/JSON-Lines execution model, and for `--spot-ws-url` (redirects the gateway these three dial for one invocation; `--futures-ws-url` has no effect here).
-- **`symbols` and `tickers` are hidden-filtered**: the result is narrowed by locale, request IP and the calling account, so a pair missing from the list may be hidden rather than nonexistent. `symbol-trade` reports the same condition as `sst = 2` (NOT_EXIST) instead of omitting the pair.
+- **`ws-ticker`/`ws-depth`/`ws-trades` are public WebSocket subscriptions** against the exchange's spot v3 public gateway. Like the REST market-data operations, they need no saved credential profile. See the `mexc-ws` skill for the shared `--listen-duration`/`--limit`/JSON-Lines execution model, and for `--spot-ws-url` (redirects the gateway these three dial for one invocation; `--futures-ws-url` has no effect here).
+- **`symbols` and `tickers` are hidden-filtered**: the result is narrowed by locale and request IP, so a pair missing from the list may be hidden rather than nonexistent. These calls carry no account, so nothing is hidden or shown because of who is asking — a pair listed here can still be refused at placement for the caller's account. `symbol-trade` reports the same condition as `sst = 2` (NOT_EXIST) instead of omitting the pair.
 - **One-of-two required pairs** (the CLI cannot enforce this, the upstream refuses the call): `ticker` and `symbol-trade` need `--symbol` **or** `--symbolId`; `coin-introduce` needs `--coinId` **or** `--coinName`. Passing neither returns a `500` envelope naming both fields. `depth` and `deals` key off `--symbolId` only.
 - **`coins-introduce` takes a list**: pass `--coinIds` as a comma-separated list with no spaces, e.g. `--coinIds 128,129`.
 - **Large result sets**: `tickers` returns every pair (order of hundreds) and `api-available-symbols` returns thousands. Filter or aggregate locally rather than pushing the whole payload into context.
@@ -62,10 +62,10 @@ spot.marketv2
 
 | Command | scope | access | signed | identity | idempotent | Endpoint | Description |
 |---------|-------|--------|--------|----------|------------|--------------|-------------|
-| `mexc spot marketv2 symbols`                 | `spot.marketv2` | read | yes | yes | yes | `GET /api/cli/spot/market-v2/symbolsV2`               | All spot trading pairs, grouped by market (V2); hidden pairs are filtered out by locale / IP / account |
-| `mexc spot marketv2 tickers`                 | `spot.marketv2` | read | yes | yes | yes | `GET /api/cli/spot/market-v2/tickers`                 | 24h ticker list for all trading pairs; hidden pairs are filtered out by locale / IP / account |
+| `mexc spot marketv2 symbols`                 | `spot.marketv2` | read | no | no | yes | `GET /api/cli/spot/market-v2/symbolsV2`               | All spot trading pairs, grouped by market (V2); hidden pairs are filtered out by locale / IP / account |
+| `mexc spot marketv2 tickers`                 | `spot.marketv2` | read | no | no | yes | `GET /api/cli/spot/market-v2/tickers`                 | 24h ticker list for all trading pairs; hidden pairs are filtered out by locale / IP / account |
 | `mexc spot marketv2 ticker`                  | `spot.marketv2` | read | no | no | yes | `GET /api/cli/spot/market-v2/symbol/ticker`           | 24h ticker detail for a single trading pair |
-| `mexc spot marketv2 symbol-trade`            | `spot.marketv2` | read | yes | yes | yes | `GET /api/cli/spot/market-v2/symbol/trade`            | Trade-page info for a pair: fee rates, order types, order limits |
+| `mexc spot marketv2 symbol-trade`            | `spot.marketv2` | read | no | no | yes | `GET /api/cli/spot/market-v2/symbol/trade`            | Trade-page info for a pair: fee rates, order types, order limits |
 | `mexc spot marketv2 coin-delay`              | `spot.marketv2` | read | no | no | yes | `GET /api/cli/spot/market-v2/coin/delay`              | Coins shown with a delay notice, and their delay-announcement links |
 | `mexc spot marketv2 coin-introduce`          | `spot.marketv2` | read | no | no | yes | `GET /api/cli/spot/market-v2/coin/introduce`          | Detailed introduction for a single coin |
 | `mexc spot marketv2 coins-introduce`         | `spot.marketv2` | read | no | no | yes | `GET /api/cli/spot/market-v2/coins/introduce`         | Brief introduction for multiple coins in one call |
@@ -153,6 +153,6 @@ mexc spot marketv2 concept-plate-amount --plateId 12
 ## Notes for Agents
 
 - Implementation lives in `./api/` (one descriptor per operation; the request is delegated to the `pkg/` foundation — no HTTP/signing here).
-- Only `symbols`, `tickers`, `symbol-trade`, and `user-eftd-info` require a saved API credential profile. The other REST operations and all WebSocket operations are public.
+- Only `user-eftd-info` requires a saved API credential profile. Every other operation, REST and WebSocket, is public.
 - Unsure about parameters? run `mexc schema spot.marketv2.<op>` instead of guessing (it shows each param's `in` location, so you can see which values travel as headers).
 - All operations are reads and idempotent — safe to retry.

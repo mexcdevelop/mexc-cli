@@ -8,10 +8,13 @@
 //
 // These are CLI-gateway endpoints (path prefix /api/cli/spot/market-v2),
 // reached through the same gateway host as the openapi endpoints
-// (hosts.KeyOpenAPI). Most are public market-data reads; the four operations
-// with account-aware results inherit this subdomain's API credential identity
-// and signing defaults. scope is always spot.marketv2 (a resource identifier,
-// no action suffix); every operation is a read.
+// (hosts.KeyOpenAPI). They are public market-data reads: the subdomain default
+// is unsigned with no identity, and every operation inherits it except
+// user-eftd-info, which reads the caller's own eligibility and overrides both.
+// symbols, tickers and symbol-trade used to be signed so the backend could hide
+// pairs by the caller's account; they are public now, which means the pair list
+// is filtered by locale and request IP only. scope is always spot.marketv2 (a
+// resource identifier, no action suffix); every operation is a read.
 //
 // Locale / timezone are request headers, so they are declared with
 // In: api.InHeader and surface as --language / --convertLanguage / --timezone.
@@ -79,13 +82,11 @@ func Operations() []api.Operation {
 			},
 		},
 		{
-			Name:     "ticker",
-			Method:   "GET",
-			Path:     "/api/cli/spot/market-v2/symbol/ticker",
-			Signed:   api.SignNone,
-			Identity: api.IdentityNone,
-			Access:   api.Read,
-			Summary:  "24h ticker detail for a single trading pair",
+			Name:    "ticker",
+			Method:  "GET",
+			Path:    "/api/cli/spot/market-v2/symbol/ticker",
+			Access:  api.Read,
+			Summary: "24h ticker detail for a single trading pair",
 			Params: []api.Param{
 				{Name: "timezone", Desc: "Timezone, e.g. UTC+8 (default UTC+8)", In: api.InHeader},
 				{Name: "symbol", Desc: "Trading pair in BASE_QUOTE form, e.g. BTC_USDT — required unless symbolId is given", Pattern: symbolPattern},
@@ -106,22 +107,18 @@ func Operations() []api.Operation {
 			},
 		},
 		{
-			Name:     "coin-delay",
-			Method:   "GET",
-			Path:     "/api/cli/spot/market-v2/coin/delay",
-			Signed:   api.SignNone,
-			Identity: api.IdentityNone,
-			Access:   api.Read,
-			Summary:  "Coins shown with a delay notice, and their delay-announcement links",
+			Name:    "coin-delay",
+			Method:  "GET",
+			Path:    "/api/cli/spot/market-v2/coin/delay",
+			Access:  api.Read,
+			Summary: "Coins shown with a delay notice, and their delay-announcement links",
 		},
 		{
-			Name:     "coin-introduce",
-			Method:   "GET",
-			Path:     "/api/cli/spot/market-v2/coin/introduce",
-			Signed:   api.SignNone,
-			Identity: api.IdentityNone,
-			Access:   api.Read,
-			Summary:  "Detailed introduction for a single coin",
+			Name:    "coin-introduce",
+			Method:  "GET",
+			Path:    "/api/cli/spot/market-v2/coin/introduce",
+			Access:  api.Read,
+			Summary: "Detailed introduction for a single coin",
 			Params: []api.Param{
 				{Name: "language", Desc: "Language, e.g. en-US (default en-US)", In: api.InHeader},
 				{Name: "convertLanguage", Desc: "Conversion / display language", In: api.InHeader},
@@ -130,13 +127,11 @@ func Operations() []api.Operation {
 			},
 		},
 		{
-			Name:     "coins-introduce",
-			Method:   "GET",
-			Path:     "/api/cli/spot/market-v2/coins/introduce",
-			Signed:   api.SignNone,
-			Identity: api.IdentityNone,
-			Access:   api.Read,
-			Summary:  "Brief introduction for multiple coins in one call",
+			Name:    "coins-introduce",
+			Method:  "GET",
+			Path:    "/api/cli/spot/market-v2/coins/introduce",
+			Access:  api.Read,
+			Summary: "Brief introduction for multiple coins in one call",
 			Params: []api.Param{
 				{Name: "language", Desc: "Language, e.g. en-US (default en-US)", In: api.InHeader},
 				{Name: "convertLanguage", Desc: "Conversion / display language", In: api.InHeader},
@@ -144,13 +139,11 @@ func Operations() []api.Operation {
 			},
 		},
 		{
-			Name:     "coin-risk",
-			Method:   "GET",
-			Path:     "/api/cli/spot/market-v2/coin/risk",
-			Signed:   api.SignNone,
-			Identity: api.IdentityNone,
-			Access:   api.Read,
-			Summary:  "Risk-warning message for a coin (status + text)",
+			Name:    "coin-risk",
+			Method:  "GET",
+			Path:    "/api/cli/spot/market-v2/coin/risk",
+			Access:  api.Read,
+			Summary: "Risk-warning message for a coin (status + text)",
 			Params: []api.Param{
 				{Name: "language", Desc: "Language, e.g. en-US (default en-US)", In: api.InHeader},
 				{Name: "convertLanguage", Desc: "Conversion / display language", In: api.InHeader},
@@ -158,49 +151,39 @@ func Operations() []api.Operation {
 			},
 		},
 		{
-			Name:     "coin-new-list",
-			Method:   "GET",
-			Path:     "/api/cli/spot/market-v2/coin/new/list",
-			Signed:   api.SignNone,
-			Identity: api.IdentityNone,
-			Access:   api.Read,
-			Summary:  "New-coin ranking list",
+			Name:    "coin-new-list",
+			Method:  "GET",
+			Path:    "/api/cli/spot/market-v2/coin/new/list",
+			Access:  api.Read,
+			Summary: "New-coin ranking list",
 		},
 		{
-			Name:     "st-coins",
-			Method:   "GET",
-			Path:     "/api/cli/spot/market-v2/stCoins",
-			Signed:   api.SignNone,
-			Identity: api.IdentityNone,
-			Access:   api.Read,
-			Summary:  "ST-label coins and the markets each trades in",
+			Name:    "st-coins",
+			Method:  "GET",
+			Path:    "/api/cli/spot/market-v2/stCoins",
+			Access:  api.Read,
+			Summary: "ST-label coins and the markets each trades in",
 		},
 		{
-			Name:     "api-available-symbols",
-			Method:   "GET",
-			Path:     "/api/cli/spot/market-v2/api/available/symbols",
-			Signed:   api.SignNone,
-			Identity: api.IdentityNone,
-			Access:   api.Read,
-			Summary:  "Set of trading pairs available for API trading",
+			Name:    "api-available-symbols",
+			Method:  "GET",
+			Path:    "/api/cli/spot/market-v2/api/available/symbols",
+			Access:  api.Read,
+			Summary: "Set of trading pairs available for API trading",
 		},
 		{
-			Name:     "latest-symbols",
-			Method:   "GET",
-			Path:     "/api/cli/spot/market-v2/latest/symbols",
-			Signed:   api.SignNone,
-			Identity: api.IdentityNone,
-			Access:   api.Read,
-			Summary:  "Most recently listed spot trading pairs",
+			Name:    "latest-symbols",
+			Method:  "GET",
+			Path:    "/api/cli/spot/market-v2/latest/symbols",
+			Access:  api.Read,
+			Summary: "Most recently listed spot trading pairs",
 		},
 		{
-			Name:     "depth",
-			Method:   "GET",
-			Path:     "/api/cli/spot/market-v2/depth/v4",
-			Signed:   api.SignNone,
-			Identity: api.IdentityNone,
-			Access:   api.Read,
-			Summary:  "Order-book depth at a given price precision and level count",
+			Name:    "depth",
+			Method:  "GET",
+			Path:    "/api/cli/spot/market-v2/depth/v4",
+			Access:  api.Read,
+			Summary: "Order-book depth at a given price precision and level count",
 			Params: []api.Param{
 				{Name: "symbolId", Desc: "Trading pair id", Required: true},
 				{Name: "decimal", Desc: "Price bucket size; must be a power of ten (1, 10, 100 ... or 0.1, 0.01, 0.001 ...) AND lie within the pair's price-scale window — read the pair's ps (priceScale) from the symbols operation first", Required: true, Pattern: depthDecimalPattern},
@@ -208,38 +191,32 @@ func Operations() []api.Operation {
 			},
 		},
 		{
-			Name:     "deals",
-			Method:   "GET",
-			Path:     "/api/cli/spot/market-v2/deals/v2",
-			Signed:   api.SignNone,
-			Identity: api.IdentityNone,
-			Access:   api.Read,
-			Summary:  "Most recent trades for a trading pair",
+			Name:    "deals",
+			Method:  "GET",
+			Path:    "/api/cli/spot/market-v2/deals/v2",
+			Access:  api.Read,
+			Summary: "Most recent trades for a trading pair",
 			Params: []api.Param{
 				{Name: "symbolId", Desc: "Trading pair id", Required: true},
 			},
 		},
 		{
-			Name:     "concept-plates",
-			Method:   "GET",
-			Path:     "/api/cli/spot/market-v2/concept/platesV2",
-			Signed:   api.SignNone,
-			Identity: api.IdentityNone,
-			Access:   api.Read,
-			Summary:  "Concept-plate (sector) list (V2)",
+			Name:    "concept-plates",
+			Method:  "GET",
+			Path:    "/api/cli/spot/market-v2/concept/platesV2",
+			Access:  api.Read,
+			Summary: "Concept-plate (sector) list (V2)",
 			Params: []api.Param{
 				{Name: "language", Desc: "Language, e.g. en-US (default en-US)", In: api.InHeader},
 				{Name: "convertLanguage", Desc: "Conversion / display language", In: api.InHeader},
 			},
 		},
 		{
-			Name:     "concept-plate-introduce",
-			Method:   "GET",
-			Path:     "/api/cli/spot/market-v2/concept/plate/introduce",
-			Signed:   api.SignNone,
-			Identity: api.IdentityNone,
-			Access:   api.Read,
-			Summary:  "Introduction for a single concept plate",
+			Name:    "concept-plate-introduce",
+			Method:  "GET",
+			Path:    "/api/cli/spot/market-v2/concept/plate/introduce",
+			Access:  api.Read,
+			Summary: "Introduction for a single concept plate",
 			Params: []api.Param{
 				{Name: "language", Desc: "Language, e.g. en-US (default en-US)", In: api.InHeader},
 				{Name: "convertLanguage", Desc: "Conversion / display language", In: api.InHeader},
@@ -247,57 +224,54 @@ func Operations() []api.Operation {
 			},
 		},
 		{
-			Name:     "concept-plate-amount",
-			Method:   "GET",
-			Path:     "/api/cli/spot/market-v2/concept/plate/amount",
-			Signed:   api.SignNone,
-			Identity: api.IdentityNone,
-			Access:   api.Read,
-			Summary:  "24h turnover of each symbol in a concept plate",
+			Name:    "concept-plate-amount",
+			Method:  "GET",
+			Path:    "/api/cli/spot/market-v2/concept/plate/amount",
+			Access:  api.Read,
+			Summary: "24h turnover of each symbol in a concept plate",
 			Params: []api.Param{
 				{Name: "plateId", Desc: "Concept plate id", Required: true},
 			},
 		},
 		{
-			Name:     "meme-coins",
-			Method:   "GET",
-			Path:     "/api/cli/spot/market-v2/meme/coins",
-			Signed:   api.SignNone,
-			Identity: api.IdentityNone,
-			Access:   api.Read,
-			Summary:  "Meme-coin list (with chain info)",
+			Name:    "meme-coins",
+			Method:  "GET",
+			Path:    "/api/cli/spot/market-v2/meme/coins",
+			Access:  api.Read,
+			Summary: "Meme-coin list (with chain info)",
 		},
 		{
-			Name:     "timezone-list",
-			Method:   "GET",
-			Path:     "/api/cli/spot/market-v2/timezone/list",
-			Signed:   api.SignNone,
-			Identity: api.IdentityNone,
-			Access:   api.Read,
-			Summary:  "Timezone identifiers the system supports",
+			Name:    "timezone-list",
+			Method:  "GET",
+			Path:    "/api/cli/spot/market-v2/timezone/list",
+			Access:  api.Read,
+			Summary: "Timezone identifiers the system supports",
 		},
 		{
 			Name: "user-eftd-info", Method: "GET", Path: "/api/cli/spot/market-v2/user/eftd_info",
+			// The one operation here that is about the caller rather than the market:
+			// it reads the caller's own first-deposit eligibility, so it is signed and
+			// carries the API key while everything else in this subdomain is public.
+			// Unsigned, the backend has no member to look up and answers an empty
+			// object for everyone.
+			Signed:   signing.CliHMAC,
+			Identity: identity.OpenAPI,
+			Access:   api.Read,
+			Summary:  "Current user's EFTD (first-deposit benefit) eligibility info",
+		},
+		{
+			Name:    "stock-ranking-markets",
+			Method:  "GET",
+			Path:    "/api/cli/spot/market-v2/stockRankingMarkets",
 			Access:  api.Read,
-			Summary: "Current user's EFTD (first-deposit benefit) eligibility info",
+			Summary: "Markets supported by the US-stock ranking",
 		},
 		{
-			Name:     "stock-ranking-markets",
-			Method:   "GET",
-			Path:     "/api/cli/spot/market-v2/stockRankingMarkets",
-			Signed:   api.SignNone,
-			Identity: api.IdentityNone,
-			Access:   api.Read,
-			Summary:  "Markets supported by the US-stock ranking",
-		},
-		{
-			Name:     "metal-ranking-markets",
-			Method:   "GET",
-			Path:     "/api/cli/spot/market-v2/metalRankingMarkets",
-			Signed:   api.SignNone,
-			Identity: api.IdentityNone,
-			Access:   api.Read,
-			Summary:  "Markets supported by the metal ranking",
+			Name:    "metal-ranking-markets",
+			Method:  "GET",
+			Path:    "/api/cli/spot/market-v2/metalRankingMarkets",
+			Access:  api.Read,
+			Summary: "Markets supported by the metal ranking",
 		},
 	}
 	return append(ops, wsOperations()...)
@@ -307,8 +281,10 @@ func Operations() []api.Operation {
 // and the contract test (must match the SKILL.md frontmatter).
 const Scope = "spot.marketv2"
 
-// Signed is this subdomain's default CLI signing scheme.
-const Signed = signing.CliHMAC
+// Signed is this subdomain's default: unsigned. Market data needs no
+// credentials; user-eftd-info overrides it.
+const Signed = api.SignNone
 
-// Identity is this subdomain's default API-key identity.
-const Identity = identity.OpenAPI
+// Identity is this subdomain's default: no identity. user-eftd-info overrides
+// it with the API-key identity.
+const Identity = api.IdentityNone

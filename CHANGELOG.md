@@ -8,6 +8,41 @@ Dates are the release date. Versions are `vMAJOR.MINOR.PATCH`; while the
 major is 0, every release is a patch bump, breaking changes included, and each
 entry says what breaks.
 
+## v0.0.26 — 2026-11-23
+
+Spot trading safeguards, public market data, and fixes from user feedback.
+v0.0.25 was tagged but never synced or published, so nothing under that number
+reached GitHub or npm; this version follows v0.0.24.
+
+**Breaking for anyone cancelling every open spot order.** `spot trade cancel`
+with no selector no longer cancels the whole account. It is refused with
+`missing_argument` and sends nothing, and so is a call that carries only
+`--tradeType` / `--orderTypes`. The account-wide cancel is now
+`spot trade cancel --all`, optionally narrowed by `--tradeType` /
+`--orderTypes`; `--all` cannot be combined with `--triggerId`, `--orderId` or
+`--symbol`. On the MCP face `all` is a JSON boolean, and the confirmation prompt
+shows `all  true`.
+
+- **Spot order amounts are checked before sending.** Price, quantity and amount
+  must be a plain decimal above zero: zero, a negative number, an empty string,
+  `null`, a sign, an exponent, `.5` or `5.` are refused locally. `mexc schema`
+  publishes the rule, and `--dry-run` applies it to a body it is given.
+- **More market data needs no key.** `spot marketv2 symbols`, `tickers` and
+  `symbol-trade`, and `spot market-search global-search`, are public reads: no
+  saved profile, no signature. In `spot marketv2` only `user-eftd-info` still
+  needs a key. Public operations go from 63 of 307 to 67 of 309.
+- **MCP `--dry-run` checks a body it is given**, as the CLI already did, instead
+  of reporting a green preview for a body the real call would refuse.
+- **`--read-only` help lists only what can run**: write operations are left out
+  of help listings, as the MCP face already left out write tools.
+- **Windows: `mexc update` runs npm without `cmd.exe`.** Node 22 and later no
+  longer print the DEP0190 warning, and a timeout no longer leaves npm running
+  behind a killed shell.
+- **Docs.** A root `SKILL.md` that installs and configures `mexc` for an agent;
+  a rewritten user guide with an English version (`docs/user-guide.md`); the
+  README says the package is on the public npm registry and gives the path where
+  npm puts the platform binary.
+
 ## v0.0.24 — 2026-11-06
 
 The first version published to npm from the public repository. v0.0.23 was

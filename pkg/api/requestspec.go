@@ -87,6 +87,9 @@ func (o Operation) BuildSpec(values map[string]string, data string, files []File
 		ResponseKind: o.ResponseKind,
 	}
 	for _, p := range o.Params {
+		if p.Switch {
+			continue // a switch states the caller's intent to the CLI; it is never sent
+		}
 		v := values[p.Name]
 		switch p.In {
 		case InPath:

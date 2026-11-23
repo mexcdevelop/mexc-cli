@@ -67,6 +67,13 @@
 // Single-order lookup is deal-detail only, and it is keyed on orderId — no
 // operation here accepts a client order id, so one has to be resolved against a
 // current-orders / history-orders listing first.
+//
+// Every price, quantity and amount field of the placement and modify bodies
+// carries decimal:"positive", so a value that is not a plain decimal above zero
+// (negative, zero, empty, null, signed, exponent form) is refused locally before
+// anything is sent — on a dry-run too, which is what makes body_checked mean
+// something. Precision stays the backend's to judge: the 35 integer / 30
+// fractional digit limits and each pair's own scale are not checked here.
 package tradeapi
 
 import (
@@ -137,15 +144,15 @@ type placeOcoReq struct {
 	CurrencyID       string `json:"currencyId,omitempty" desc:"Base asset id (alt)"`
 	MarketCurrencyID string `json:"marketCurrencyId,omitempty" desc:"Quote asset id (alt)"`
 
-	Quantity    string `json:"quantity" validate:"required" desc:"Quantity, positive decimal"`
+	Quantity    string `json:"quantity" validate:"required" decimal:"positive" desc:"Quantity, positive decimal"`
 	TradeType   string `json:"tradeType" validate:"required" enum:"BUY,SELL" desc:"Order side"`
 	OrderType   string `json:"orderType" validate:"required" enum:"OCO_STOP_LIMIT_ORDER"`
 	OrderSource string `json:"orderSource" validate:"required" enum:"CLI" desc:"Order origin; always CLI"`
 
-	Price             string `json:"price" validate:"required" desc:"Limit-leg price"`
+	Price             string `json:"price" validate:"required" decimal:"positive" desc:"Limit-leg price"`
 	TriggerType       string `json:"triggerType" validate:"required" enum:"GE,LE" desc:"Activation dir; BUY=GE, SELL=LE"`
-	TriggerPrice      string `json:"triggerPrice" validate:"required" desc:"Stop-limit activation price"`
-	TriggerLimitPrice string `json:"triggerLimitPrice" validate:"required" desc:"Stop-limit placement price"`
+	TriggerPrice      string `json:"triggerPrice" validate:"required" decimal:"positive" desc:"Stop-limit activation price"`
+	TriggerLimitPrice string `json:"triggerLimitPrice" validate:"required" decimal:"positive" desc:"Stop-limit placement price"`
 
 	ClientOrderID string `json:"clientOrderId,omitempty" desc:"Client order id, 1-32 chars. Optional dedupe key: a resend reusing it is refused as a duplicate; without it a resend places a second order"`
 }
@@ -172,9 +179,9 @@ type placeTriggerReq struct {
 	TriggerType string `json:"triggerType" validate:"required" enum:"GE,LE" desc:"GE: activate when price rises to triggerPrice; LE: when it falls"`
 	OrderSource string `json:"orderSource" validate:"required" enum:"CLI" desc:"Order origin; always CLI"`
 
-	TriggerPrice string `json:"triggerPrice" validate:"required" desc:"Activation price"`
-	Price        string `json:"price" validate:"required" desc:"Limit price used once activated"`
-	Quantity     string `json:"quantity" validate:"required" desc:"Quantity, positive decimal"`
+	TriggerPrice string `json:"triggerPrice" validate:"required" decimal:"positive" desc:"Activation price"`
+	Price        string `json:"price" validate:"required" decimal:"positive" desc:"Limit price used once activated"`
+	Quantity     string `json:"quantity" validate:"required" decimal:"positive" desc:"Quantity, positive decimal"`
 }
 
 // placeMarketTriggerReq is the JSON body of spot.trade.place-market-trigger — a
@@ -212,9 +219,9 @@ type placeMarketTriggerReq struct {
 	OrderSource string `json:"orderSource" validate:"required" enum:"CLI" desc:"Order origin; always CLI"`
 	TriggerType string `json:"triggerType" validate:"required" enum:"GE,LE" desc:"GE: activate on rise to triggerPrice; LE: on fall"`
 
-	TriggerPrice string `json:"triggerPrice" validate:"required" desc:"Activation price"`
-	Quantity     string `json:"quantity,omitempty" desc:"Base-asset amount; exclusive with amount"`
-	Amount       string `json:"amount,omitempty" desc:"Quote-asset amount; exclusive with quantity"`
+	TriggerPrice string `json:"triggerPrice" validate:"required" decimal:"positive" desc:"Activation price"`
+	Quantity     string `json:"quantity,omitempty" decimal:"positive" desc:"Base-asset amount; exclusive with amount"`
+	Amount       string `json:"amount,omitempty" decimal:"positive" desc:"Quote-asset amount; exclusive with quantity"`
 
 	ClientOrderID string `json:"clientOrderId,omitempty" desc:"Client order id, 1-32 chars. Optional dedupe key: a resend reusing it is refused as a duplicate; without it a resend places a second order"`
 }
@@ -250,11 +257,11 @@ type placeTrackReq struct {
 	// branches enumerate "at least one non-zero decimal, at most four", which is
 	// how the range is expressed without a negative lookahead (RE2 has none).
 	TrackAmplitude   string `json:"trackAmplitude" validate:"required" pattern:"^(1([.]0{1,4})?|0[.][1-9][0-9]{0,3}|0[.]0[1-9][0-9]{0,2}|0[.]00[1-9][0-9]?|0[.]000[1-9])$" desc:"Trail FRACTION within (0,1] at 4 decimals: 0.05 = 5%, 0.5 = 50%"`
-	TrackActivePrice string `json:"trackActivePrice,omitempty" desc:"Optional activation price before trailing starts"`
+	TrackActivePrice string `json:"trackActivePrice,omitempty" decimal:"positive" desc:"Optional activation price before trailing starts"`
 
-	Price    string `json:"price,omitempty" desc:"Limit price; TRACK_LIMIT_ORDER only"`
-	Quantity string `json:"quantity,omitempty" desc:"Base-asset amount"`
-	Amount   string `json:"amount,omitempty" desc:"Quote-asset amount; TRACK_MARKET_ORDER only"`
+	Price    string `json:"price,omitempty" decimal:"positive" desc:"Limit price; TRACK_LIMIT_ORDER only"`
+	Quantity string `json:"quantity,omitempty" decimal:"positive" desc:"Base-asset amount"`
+	Amount   string `json:"amount,omitempty" decimal:"positive" desc:"Quote-asset amount; TRACK_MARKET_ORDER only"`
 
 	ClientOrderID string `json:"clientOrderId,omitempty" desc:"Client order id, 1-32 chars. Optional dedupe key: a resend reusing it is refused as a duplicate; without it a resend places a second order"`
 }
@@ -279,15 +286,15 @@ type placeReq struct {
 	CurrencyID       string `json:"currencyId,omitempty" desc:"Base asset id (alt)"`
 	MarketCurrencyID string `json:"marketCurrencyId,omitempty" desc:"Quote asset id (alt)"`
 
-	Price     string `json:"price" validate:"required" desc:"Order price"`
-	Quantity  string `json:"quantity" validate:"required" desc:"Quantity, positive decimal"`
+	Price     string `json:"price" validate:"required" decimal:"positive" desc:"Order price"`
+	Quantity  string `json:"quantity" validate:"required" decimal:"positive" desc:"Quantity, positive decimal"`
 	TradeType string `json:"tradeType" validate:"required" enum:"BUY,SELL" desc:"Order side"`
 
 	OrderType   string `json:"orderType,omitempty" enum:"LIMIT_ORDER,MARKET_ORDER,IMMEDIATE_OR_CANCEL,POST_ONLY,FILL_OR_KILL" desc:"Defaults to LIMIT_ORDER"`
 	OrderSource string `json:"orderSource" validate:"required" enum:"CLI" desc:"Order origin; always CLI"`
 
-	ProfitTriggerPrice string `json:"profitTriggerPrice,omitempty" desc:"Take-profit trigger; BUY: above price, SELL: below"`
-	LoseTriggerPrice   string `json:"loseTriggerPrice,omitempty" desc:"Stop-loss trigger; BUY: below price, SELL: above"`
+	ProfitTriggerPrice string `json:"profitTriggerPrice,omitempty" decimal:"positive" desc:"Take-profit trigger; BUY: above price, SELL: below"`
+	LoseTriggerPrice   string `json:"loseTriggerPrice,omitempty" decimal:"positive" desc:"Stop-loss trigger; BUY: below price, SELL: above"`
 
 	ClientOrderID string `json:"clientOrderId,omitempty" desc:"Client order id, 1-32 chars. Optional dedupe key: a resend reusing it is refused as a duplicate; without it a resend places a second order"`
 }
@@ -323,8 +330,8 @@ type placeMarketReq struct {
 	OrderType   string `json:"orderType" validate:"required" enum:"MARKET_ORDER" desc:"Market orders only"`
 	OrderSource string `json:"orderSource" validate:"required" enum:"CLI" desc:"Order origin; always CLI"`
 
-	Quantity string `json:"quantity,omitempty" desc:"Base-asset amount, e.g. sell 0.001 BTC; exclusive with amount"`
-	Amount   string `json:"amount,omitempty" desc:"Quote-asset amount, e.g. spend 100 USDT; exclusive with quantity"`
+	Quantity string `json:"quantity,omitempty" decimal:"positive" desc:"Base-asset amount, e.g. sell 0.001 BTC; exclusive with amount"`
+	Amount   string `json:"amount,omitempty" decimal:"positive" desc:"Quote-asset amount, e.g. spend 100 USDT; exclusive with quantity"`
 
 	ClientOrderID string `json:"clientOrderId,omitempty" pattern:"^[0-9a-zA-Z_-]{1,32}$" desc:"Client order id, 1-32 chars of [0-9a-zA-Z_-]. Optional dedupe key: a resend reusing it is refused as a duplicate; without it a resend places a second order"`
 }
@@ -335,8 +342,8 @@ type placeMarketReq struct {
 // quantity can change — side, symbol and type are inherited from the original.
 type modifyReq struct {
 	OrderID     string `json:"orderId" validate:"required" desc:"Id of the resting limit order to modify"`
-	Price       string `json:"price" validate:"required" desc:"New price, positive decimal"`
-	Quantity    string `json:"quantity" validate:"required" desc:"New quantity, positive decimal"`
+	Price       string `json:"price" validate:"required" decimal:"positive" desc:"New price, positive decimal"`
+	Quantity    string `json:"quantity" validate:"required" decimal:"positive" desc:"New quantity, positive decimal"`
 	OrderSource string `json:"orderSource" validate:"required" enum:"CLI" desc:"Order origin; always CLI"`
 }
 
@@ -467,21 +474,35 @@ func Operations() []api.Operation {
 			// backend dedupes per order for ~3s and answers CANCEL_ORDER_TOO_QUICKLY
 			// inside that window; that is a business state, not a transport failure.
 			Idempotent: api.Ptr(true),
-			// FOUR modes, selected by WHICH params are present rather than by an
-			// explicit mode flag: one plan order (triggerId), one order (orderId),
-			// one pair (symbol/symbolId + optional filters), or the whole account
-			// (nothing at all — cancelBatch with a null symbol, the same call the
-			// backend's own bulk path uses). All four are intended behaviour, so
-			// every param is correctly optional; the precedence and the scope-widens-
-			// when-a-param-is-missing consequence live in SKILL.md. The summary spells
-			// the account-wide form out because it is the widest one and the CLI/MCP
-			// faces show only the summary.
+			// FOUR modes, still selected by WHICH params are present: one plan order
+			// (triggerId), one order (orderId), one pair (symbol/symbolId + optional
+			// filters), or the whole account. The backend's account-wide form is the
+			// request with no selector at all (cancelBatch with a null symbol, the
+			// same call its own bulk path uses), and that is exactly why it must not
+			// be reachable by omission: a selector dropped on a retry used to widen a
+			// one-order cancel into every open order with nothing in the prompt to
+			// mark it. So the widest mode now has to be named: RequireOneOf refuses a
+			// call that supplies no selector (filters alone included), and the `all`
+			// switch is how a caller asks for the account. `all` is local — the
+			// request it produces is byte-for-byte the old no-selector request — and
+			// it is exclusive with the four selectors, which would otherwise make
+			// the call mean two scopes at once. The selectors keep their backend
+			// precedence among themselves (triggerId over orderId, symbolId over
+			// symbol); only `all` is paired against them.
+			//
+			// The summary lists the modes widest first, the rule for an operation
+			// whose reach depends on its params; it is also the hint the RequireOneOf
+			// refusal carries.
 			//
 			// Two things this cannot do: cancel by origClientOrderId (the endpoint takes
 			// no client-order-id param at all, so a client id has to be resolved against
 			// a current-orders listing first), and cancel several symbols in one call
 			// (symbol is a single pair, so N pairs means N calls).
-			Summary: "Cancel one order (triggerId/orderId), one pair (symbol, with optional side/type filters), or — with no parameters at all — every open order in the account",
+			Summary:      "Cancel every open order in the account (--all, optionally narrowed by side/type), one pair's open orders (symbol/symbolId), or one order (orderId/triggerId); a call naming none of them is refused",
+			RequireOneOf: []string{"triggerId", "orderId", "symbol", "symbolId", "all"},
+			Exclusive: [][]string{
+				{"all", "triggerId"}, {"all", "orderId"}, {"all", "symbol"}, {"all", "symbolId"},
+			},
 			Params: []api.Param{
 				// Single-cancel mode. triggerId wins over orderId when both are sent,
 				// but orderId is the one to reach for: it cancels every kind of order
@@ -501,9 +522,13 @@ func Operations() []api.Operation {
 				{Name: "symbol", Desc: "Batch mode: cancel this pair's open orders, spelled as current-orders returns it, e.g. BTC_USDT (used only when no id is given)"},
 				{Name: "symbolId", Desc: "Batch mode: same as symbol but by pair id; takes precedence over symbol"},
 				// Both filters are INTEGER codes on the wire, unlike deal-detail's
-				// orderType which is a NAME — an easy pair to mix up.
-				{Name: "tradeType", Desc: "Batch filter, side as a code: 1 BUY, 2 SELL; omit for both", Enum: tradeTypeCodes},
-				{Name: "orderTypes", Desc: "Batch filter, comma-separated OrderType CODES (not names), e.g. 100,103 for stop-limit+stop-market; omit for all"},
+				// orderType which is a NAME — an easy pair to mix up. They narrow a batch
+				// (symbol/symbolId or all) and select nothing on their own.
+				{Name: "tradeType", Desc: "Batch filter (with symbol/symbolId or --all), side as a code: 1 BUY, 2 SELL; omit for both", Enum: tradeTypeCodes},
+				{Name: "orderTypes", Desc: "Batch filter (with symbol/symbolId or --all), comma-separated OrderType CODES (not names), e.g. 100,103 for stop-limit+stop-market; omit for all"},
+				// The account-wide mode, by name. Never sent: the request is the
+				// no-selector batch cancel, narrowed by the filters if given.
+				{Name: "all", Switch: true, Desc: "Cancel every open order in the account, across all pairs; narrow it with tradeType/orderTypes. Cannot be combined with orderId, triggerId, symbol or symbolId"},
 			},
 		},
 		{

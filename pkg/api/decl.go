@@ -310,7 +310,73 @@ func (o Operation) validateParams() error {
 		if !p.In.Valid() {
 			return declErr(o, "param %q has undefined In %q — use the api.In* constants (omit for query)", p.Name, p.In)
 		}
+		if p.Switch {
+			if err := o.checkSwitch(p); err != nil {
+				return err
+			}
+			continue
+		}
 		if err := o.checkParamConstraints(p); err != nil {
+			return err
+		}
+	}
+	return o.validateParamGroups()
+}
+
+// checkSwitch enforces that a switch is only a switch. Every other attribute
+// would be a promise nothing keeps: a switch is never sent, so a location means
+// nothing; its value is only ever "true" or absent, so an enum, a pattern or a
+// bound has nothing to check; and a required switch would be a flag every call
+// must pass, which is no choice at all.
+func (o Operation) checkSwitch(p Param) error {
+	if p.Required || len(p.Enum) > 0 || p.In != "" || p.Sensitive || p.Pattern != "" ||
+		p.MinLen != 0 || p.MaxLen != 0 || p.MinVal != nil || p.MaxVal != nil {
+		return declErr(o, "switch param %q must not set Required, Enum, In, Sensitive or any constraint — "+
+			"a switch is a bare boolean that never leaves the process", p.Name)
+	}
+	if o.Kind == KindWSCollect {
+		return declErr(o, "switch param %q is not supported on a KindWSCollect operation", p.Name)
+	}
+	return nil
+}
+
+// validateParamGroups checks RequireOneOf and Exclusive against the declared
+// params: every name must be declared, a group must actually be a group, and no
+// member may be Required — a required member satisfies a RequireOneOf by itself
+// and makes the rest of an Exclusive group unusable, so either way the rule
+// would be dead code that reads like a guarantee.
+func (o Operation) validateParamGroups() error {
+	declared := make(map[string]Param, len(o.Params))
+	for _, p := range o.Params {
+		declared[p.Name] = p
+	}
+	check := func(rule string, names []string) error {
+		if len(names) < 2 {
+			return declErr(o, "%s %v must name at least two params (a single param is just Required)", rule, names)
+		}
+		seen := map[string]bool{}
+		for _, n := range names {
+			p, ok := declared[n]
+			if !ok {
+				return declErr(o, "%s names %q, which is not a declared param", rule, n)
+			}
+			if p.Required {
+				return declErr(o, "%s names %q, which is Required — a required member makes the rule meaningless", rule, n)
+			}
+			if seen[n] {
+				return declErr(o, "%s names %q twice", rule, n)
+			}
+			seen[n] = true
+		}
+		return nil
+	}
+	if len(o.RequireOneOf) > 0 {
+		if err := check("RequireOneOf", o.RequireOneOf); err != nil {
+			return err
+		}
+	}
+	for _, g := range o.Exclusive {
+		if err := check("Exclusive group", g); err != nil {
 			return err
 		}
 	}
@@ -407,12 +473,21 @@ func (o Operation) validateBodyConstraints() error {
 func (o Operation) checkConstraintTags(name, kind string, tag reflect.StructTag) error {
 	minv, maxv := tag.Get("minval"), tag.Get("maxval")
 	minl, maxl, pat := tag.Get("minlen"), tag.Get("maxlen"), tag.Get("pattern")
+	dec := tag.Get("decimal")
 
 	if (minv != "" || maxv != "") && kind != "integer" && kind != "number" {
 		return declErr(o, "body field %q is %s but carries minval/maxval — numeric bounds are only valid on an integer/number field", name, kind)
 	}
 	if (minl != "" || maxl != "" || pat != "") && kind != "string" {
 		return declErr(o, "body field %q is %s but carries minlen/maxlen/pattern — length/pattern are only valid on a string field", name, kind)
+	}
+	if dec != "" {
+		if kind != "string" {
+			return declErr(o, "body field %q is %s but carries decimal — it is only valid on a string field (a decimal amount carried as a string)", name, kind)
+		}
+		if dec != DecimalPositive {
+			return declErr(o, "body field %q has decimal %q — the only supported value is %q", name, dec, DecimalPositive)
+		}
 	}
 
 	minF, err := parseDeclFloat(o, name, "minval", minv)

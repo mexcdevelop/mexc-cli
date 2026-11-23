@@ -24,6 +24,10 @@ import (
 // write-confirmation display, so a token or secret is never shown in the prompt.
 const SensitiveMask = "***"
 
+// DecimalPositive is the one value of the `decimal` body-field tag: the string
+// must be a plain decimal greater than zero. See BodyField.Decimal.
+const DecimalPositive = "positive"
+
 // Access is the action dimension of an operation (the access column of its
 // SKILL.md row). Whether something is a write is derived from it; there is no
 // separate write field, which avoids a redundant state. It is an open
@@ -263,6 +267,17 @@ type Param struct {
 	MinLen  int      // minimum string length; 0 = no limit
 	MaxLen  int      // maximum string length; 0 = no limit
 	Pattern string   // regular expression the value must fully match; "" = no limit
+
+	// Switch declares a boolean that never leaves the process: a bare --<name> on
+	// the CLI (it takes no value) and a JSON boolean on the MCP face. It is never
+	// sent to the backend and never signed. It exists so a caller can state an
+	// intent the request itself cannot carry — the case it was made for is an
+	// operation whose WIDEST scope is the request with no selector at all, which
+	// must not be reachable by accident (see RequireOneOf). A switch carries no
+	// other attribute: no location, no Required, no Enum and no constraint
+	// (ValidateDecl enforces this). Its collected value is "true" when set and
+	// absent otherwise, so it shows in the confirmation prompt like any param.
+	Switch bool
 }
 
 // MultipartDecl declares (on an Operation) a multipart/form-data upload. Files
@@ -297,6 +312,20 @@ type Operation struct {
 	Access  Access // read / write
 	Summary string // one-line description, used as the Short of the cobra command
 	Params  []Param
+
+	// RequireOneOf names params of which AT LEAST ONE must be supplied. It is for
+	// an operation whose scope is chosen by which params are present: without it,
+	// the call that supplies none of them silently takes the widest scope. With
+	// it, that call is refused with missing_argument before anything is sent, and
+	// the widest scope has to be asked for by name (typically a Switch). Every
+	// name must be a declared, non-Required param; a single name is just Required.
+	RequireOneOf []string
+
+	// Exclusive lists groups of params of which AT MOST ONE may be supplied in one
+	// call. Each group has at least two declared, non-Required params. A pair
+	// group per conflict keeps the rule exact: params that are not paired keep
+	// whatever precedence the backend gives them.
+	Exclusive [][]string
 
 	// ResponseKind is the shape of the response body. Zero (JSON) is the common
 	// case: the response is buffered and decoded. Set it to ResponseBinary for a
@@ -511,13 +540,16 @@ func (o Operation) RiskTier() RiskTier {
 // In carries the canonical location (the zero value is normalized to InQuery),
 // so the serialized value is always a concrete "query"/"path"/… — the same
 // closed-enum type the declaration uses, and consistent with how Schema.Signed
-// and Schema.Identity carry their effective enum values.
+// and Schema.Identity carry their effective enum values. A switch has no
+// location at all — it never leaves the process — so it reports switch=true
+// and omits in.
 type ParamSchema struct {
 	Name      string   `json:"name"`
 	Desc      string   `json:"desc,omitempty"`
 	Required  bool     `json:"required"`
 	Enum      []string `json:"enum,omitempty"`
-	In        ParamIn  `json:"in"`                  // query / path / header / cookie / form
+	In        ParamIn  `json:"in,omitempty"`        // query / path / header / cookie / form; absent for a switch
+	Switch    bool     `json:"switch,omitempty"`    // a bare boolean flag that is never sent (see Param.Switch)
 	Sensitive bool     `json:"sensitive,omitempty"` // value is masked in the write-confirmation display
 	MinVal    *float64 `json:"minval,omitempty"`    // numeric lower bound, inclusive
 	MaxVal    *float64 `json:"maxval,omitempty"`    // numeric upper bound, inclusive
@@ -550,6 +582,14 @@ type BodyField struct {
 	MinLen  int      `json:"minlen,omitempty"`
 	MaxLen  int      `json:"maxlen,omitempty"`
 	Pattern string   `json:"pattern,omitempty"`
+	// Decimal constrains a STRING field that carries a decimal amount, projected
+	// from the `decimal` struct tag. The one value is DecimalPositive: a plain
+	// decimal (digits, optionally one '.' with digits on both sides — no sign, no
+	// exponent, no surrounding space) that is greater than zero. It exists because
+	// amounts travel as strings to keep their exact digits, and the numeric
+	// minval/maxval only apply to integer/number fields. A field carrying it also
+	// refuses a JSON null, which the string checks above would otherwise skip.
+	Decimal string `json:"decimal,omitempty"`
 	// RequiredIf declares a conditional presence rule: the field is required when
 	// a sibling field's value starts with a given prefix. Format: "Field:prefix"
 	// (e.g. "ValueType:JSON_" means required when valueType starts with "JSON_").
@@ -625,9 +665,11 @@ type Schema struct {
 	Permission   *PermissionSchema `json:"permission,omitempty"`
 	Summary      string            `json:"summary,omitempty"`
 	Params       []ParamSchema     `json:"params"`
-	Body         *BodySchema       `json:"body,omitempty"`          // present when the op has a JSON request body (carried on --data)
-	Multipart    *MultipartSchema  `json:"multipart,omitempty"`     // present when the op is a multipart upload (files on --file)
-	ResponseKind ResponseKind      `json:"response_kind,omitempty"` // present only for a binary (download) response; JSON is the omitted default
+	RequireOneOf []string          `json:"require_one_of,omitempty"` // at least one of these params must be supplied (see Operation.RequireOneOf)
+	Exclusive    [][]string        `json:"exclusive,omitempty"`      // at most one param of each group may be supplied (see Operation.Exclusive)
+	Body         *BodySchema       `json:"body,omitempty"`           // present when the op has a JSON request body (carried on --data)
+	Multipart    *MultipartSchema  `json:"multipart,omitempty"`      // present when the op is a multipart upload (files on --file)
+	ResponseKind ResponseKind      `json:"response_kind,omitempty"`  // present only for a binary (download) response; JSON is the omitted default
 	// Stream is true for a WS-backed operation (Method/Path are omitted for
 	// one — see above); false (omitted) for every ordinary request-response
 	// operation.
@@ -642,12 +684,17 @@ type Schema struct {
 func (o Operation) Schema(qualifiedID string, effSigned Signing, effIdentity Identity) Schema {
 	params := make([]ParamSchema, 0, len(o.Params))
 	for _, p := range o.Params {
+		in := p.In.Canonical()
+		if p.Switch {
+			in = "" // a switch never travels, so it has no location to report
+		}
 		params = append(params, ParamSchema{
 			Name:      p.Name,
 			Desc:      p.Desc,
 			Required:  p.Required,
 			Enum:      p.Enum,
-			In:        p.In.Canonical(),
+			In:        in,
+			Switch:    p.Switch,
 			Sensitive: p.Sensitive,
 			MinVal:    p.MinVal,
 			MaxVal:    p.MaxVal,
@@ -704,6 +751,8 @@ func (o Operation) Schema(qualifiedID string, effSigned Signing, effIdentity Ide
 		Permission:   perm,
 		Summary:      o.Summary,
 		Params:       params,
+		RequireOneOf: o.RequireOneOf,
+		Exclusive:    o.Exclusive,
 		Body:         body,
 		Multipart:    multipart,
 		ResponseKind: o.ResponseKind,
@@ -926,6 +975,7 @@ func reflectBodyFields(t reflect.Type) []BodyField {
 			MinLen:     parseIntTag(sf.Tag.Get("minlen")),
 			MaxLen:     parseIntTag(sf.Tag.Get("maxlen")),
 			Pattern:    sf.Tag.Get("pattern"),
+			Decimal:    sf.Tag.Get("decimal"),
 			RequiredIf: sf.Tag.Get("required_if"),
 		}
 		ft := sf.Type

@@ -15,33 +15,33 @@ import (
 // the test asks only "is signing required?" / "is a login required?" — never
 // literal equality.
 
-// publicRESTOperations are the public market-data operations that explicitly
-// opt out of the signed, API-key-backed subdomain defaults. The remaining REST
-// operations retain those defaults because their responses are account-aware.
-var publicRESTOperations = map[string]bool{
-	"ticker":                  true,
-	"coin-delay":              true,
-	"coin-introduce":          true,
-	"coins-introduce":         true,
-	"coin-risk":               true,
-	"coin-new-list":           true,
-	"st-coins":                true,
-	"api-available-symbols":   true,
-	"latest-symbols":          true,
-	"depth":                   true,
-	"deals":                   true,
-	"concept-plates":          true,
-	"concept-plate-introduce": true,
-	"concept-plate-amount":    true,
-	"meme-coins":              true,
-	"timezone-list":           true,
-	"stock-ranking-markets":   true,
-	"metal-ranking-markets":   true,
+// accountOperations are the operations that are about the caller rather than the
+// market, and so override the public subdomain defaults with a signature and the
+// API-key identity. Everything else inherits the defaults and needs no profile.
+var accountOperations = map[string]bool{
+	"user-eftd-info": true,
+}
+
+// Contract: market data is public — the subdomain defaults are unsigned with no
+// identity. symbols, tickers and symbol-trade used to inherit a signed default so
+// the backend could hide pairs by account; that filter is gone on purpose, and
+// this pins it so a signed default cannot quietly come back.
+func TestSubdomain_DefaultsArePublic(t *testing.T) {
+	if Signed != api.SignNone || Identity != api.IdentityNone {
+		t.Errorf("spot.marketv2 defaults are Signed=%q Identity=%q, want none/none", Signed, Identity)
+	}
+	for _, name := range []string{"symbols", "tickers", "symbol-trade"} {
+		for _, op := range Operations() {
+			if op.Name == name && (effectiveSigned(op) != api.SignNone || effectiveIdentity(op) != api.IdentityNone) {
+				t.Errorf("%s must be public (unsigned, no identity)", name)
+			}
+		}
+	}
 }
 
 // Contract: every Operation declaration is well-formed, op names are unique,
-// public REST and WebSocket operations explicitly opt out of credentials, and
-// account-aware REST operations inherit the subdomain authentication defaults.
+// public operations inherit the subdomain defaults rather than restating them,
+// and the account operations override both auth axes.
 func TestOps_FieldsValid(t *testing.T) {
 	seen := map[string]bool{}
 	for _, op := range Operations() {
@@ -53,20 +53,20 @@ func TestOps_FieldsValid(t *testing.T) {
 			t.Errorf("op %q: %v", op.Name, err)
 		}
 
-		if op.Kind == api.KindWSCollect || publicRESTOperations[op.Name] {
-			if op.Signed != api.SignNone {
-				t.Errorf("public op %q must override Signed to api.SignNone", op.Name)
+		if accountOperations[op.Name] {
+			if !op.Signed.Signs() {
+				t.Errorf("account op %q must override Signed with a real scheme", op.Name)
 			}
-			if op.Identity != api.IdentityNone {
-				t.Errorf("public op %q must override Identity to api.IdentityNone", op.Name)
+			if !op.Identity.Concrete() || op.Identity == api.IdentityNone {
+				t.Errorf("account op %q must override Identity with a real identity", op.Name)
 			}
 			continue
 		}
 		if op.Signed.Concrete() {
-			t.Errorf("account-aware op %q must inherit the subdomain Signed default", op.Name)
+			t.Errorf("public op %q must inherit the subdomain Signed default, not restate it", op.Name)
 		}
 		if op.Identity.Concrete() {
-			t.Errorf("account-aware op %q must inherit the subdomain Identity default", op.Name)
+			t.Errorf("public op %q must inherit the subdomain Identity default, not restate it", op.Name)
 		}
 	}
 }
@@ -91,8 +91,8 @@ func effectiveSigned(op api.Operation) api.Signing {
 }
 
 // effectiveIdentity mirrors the same inheritance for Identity: a concrete
-// op-level value overrides (e.g. ws-ticker/ws-depth/ws-trades override to
-// api.IdentityNone); the zero value inherits the subdomain const.
+// op-level value overrides (user-eftd-info overrides to the API-key identity);
+// the zero value inherits the subdomain const.
 func effectiveIdentity(op api.Operation) api.Identity {
 	if op.Identity.Concrete() {
 		return op.Identity

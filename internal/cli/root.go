@@ -603,8 +603,50 @@ func NewApp(name, short string, ds []api.DomainSpec, skillsFS []fs.FS, edFlags f
 			guardGroup(c, f, fe)
 		}
 	}
+	// Under --read-only a help listing shows only what can run, the CLI
+	// counterpart of the MCP face withholding write tools (collectMCPTools). The
+	// tree is mounted before flags are parsed, so this is decided when help is
+	// rendered: cobra renders it without running PersistentPreRunE, but by then
+	// the flags are parsed and f.Config() resolves them, MEXC_READ_ONLY included.
+	// Children inherit the root's HelpFunc and `help <path>` calls Help(), so
+	// every way of asking for help goes through here. A write stays addressable —
+	// `<write> --help` still documents it — and running one is refused by the gate
+	// in newOperationCmd, which remains the enforcement.
+	defaultHelp := root.HelpFunc()
+	root.SetHelpFunc(func(c *cobra.Command, args []string) {
+		if f.Config().ReadOnly {
+			hideWritesForReadOnly(root)
+		}
+		defaultHelp(c, args)
+	})
 
 	return &App{root: root, fe: fe, errW: errW, f: f, ae: ae}
+}
+
+// hideWritesForReadOnly marks every write operation's command Hidden, and every
+// operation group left with nothing visible, and reports whether c ended up
+// hidden. Builtin groups carry no annotation and are never hidden here. It
+// mutates the tree, which is safe only because rendering help is the last thing
+// the invocation does.
+func hideWritesForReadOnly(c *cobra.Command) bool {
+	if c.Annotations[annotationWrite] == "true" {
+		c.Hidden = true
+		return true
+	}
+	subs := c.Commands()
+	if len(subs) == 0 {
+		return c.Hidden
+	}
+	visible := false
+	for _, s := range subs {
+		if !hideWritesForReadOnly(s) {
+			visible = true
+		}
+	}
+	if !visible && c.Annotations[annotationOpGroup] == "true" {
+		c.Hidden = true
+	}
+	return c.Hidden
 }
 
 // newHelpCmd replaces cobra's built-in `help`, which prints "Unknown help topic"

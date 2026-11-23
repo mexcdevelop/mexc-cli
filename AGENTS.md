@@ -142,6 +142,14 @@ not collide with the reserved framework flags (`base-url`, `read-only`,
 `dry-run`, `no-retry`, `profile`, `env`, `help`, `yes`, `data`, `file`). (`version` is
 not reserved: cobra's `--version` is root-only, so a leaf op may use it.)
 
+The one exception to "a param is sent" is a **switch**: `Param{Name: "all",
+Switch: true}` is a bare boolean — `--all` on the CLI, a JSON boolean on the MCP
+face — that never leaves the process and is never signed. It exists so a caller
+can name an intent the request cannot carry (see the REACH paragraph below). A
+switch carries no other attribute: no `In`, no `Required`, no `Enum`, no
+constraint; `ValidateDecl` refuses one that tries. `mexc schema` reports it as
+`switch: true` with no `in`.
+
 **Sensitive values.** A write is confirmed before it runs, and the prompt shows
 the request's params/body so the user can verify the exact action. If a rare
 param or body field carries a secret (e.g. a token), mask its value in the
@@ -154,25 +162,40 @@ at send time, not params.
 its `Summary`.** The confirmation prompt is titled with the Summary and then
 lists the supplied params, and nothing else in the declaration speaks at prompt
 time — so an operation with several modes has to enumerate them there, widest
-first. Be aware of what the prompt still cannot say: the modes are separated only
-by ABSENCE, and the widest one is normally selected by supplying the least (`spot
-trade cancel` with no params at all cancels every open order in the account), so
-the most dangerous call renders the fewest lines, and a param lost on a retry
-widens the reach with nothing in the prompt to mark it. Where that gap matters,
-warn the agent in the sub-domain's `SKILL.md` — it is read before the call, which
-is the only moment left.
+first. Be aware of what the prompt cannot say by itself: when the modes are
+separated only by ABSENCE, the widest one is selected by supplying the least, so
+the most dangerous call renders the fewest lines and a param lost on a retry
+widens the reach with nothing in the prompt to mark it.
+
+Close that gap in the declaration, not in prose. `RequireOneOf` names the params
+of which at least one must be supplied; a call that names none of them is refused
+with `missing_argument` (the hint is the Summary) before anything is sent. When
+the widest mode is the backend's request with no selector, give it a name with a
+switch and put the switch in the group, so it is only ever reached by asking for
+it. `Exclusive` lists groups of params of which at most one may be supplied —
+pair the switch against each selector it must not ride along with, and leave the
+selectors' own precedence alone. `spot trade cancel` is the worked example: its
+account-wide cancel used to be `cancel` with no params and is now `cancel --all`,
+and the prompt shows `all  true`. Both rules run in `Validate`, so the CLI and
+MCP faces enforce them identically, and `mexc schema` publishes them as
+`require_one_of` / `exclusive`. Members must be declared and not `Required`.
 
 **Pre-validation constraints.** Declare per-field bounds and the framework
 enforces them uniformly (both faces, before the request is sent), like Enum:
 - **params**: `Param{... MinVal / MaxVal, MinLen / MaxLen, Pattern}`.
-- **body fields**: the `minval` / `maxval` / `minlen` / `maxlen` / `pattern`
-  struct tags.
+- **body fields**: the `minval` / `maxval` / `minlen` / `maxlen` / `pattern` /
+  `decimal` struct tags.
 
 `minval`/`maxval` are inclusive numeric bounds (integer/number fields);
 `minlen`/`maxlen` bound a string's character length; `pattern` is a regex the
-whole value must match. A numeric tag on a string field (or vice-versa),
-`min > max`, or an uncompilable pattern fails `ValidateDecl` at load time. Zero
-value = no limit, so declare only what you need.
+whole value must match. `decimal:"positive"` is for an amount carried as a
+STRING (so its digits survive exactly): the value must be a plain decimal above
+zero — digits with an optional fraction, no sign, no exponent, no spaces — and a
+JSON `null` is refused, which the string checks above otherwise skip. It is the
+only `decimal` value; precision limits stay the backend's. A numeric tag on a
+string field (or vice-versa), `decimal` on a non-string field, `min > max`, or an
+uncompilable pattern fails `ValidateDecl` at load time. Zero value = no limit, so
+declare only what you need.
 
 **Param locations.** `In` declares where a param travels: omit for query (the
 common case; `api.InQuery` is its explicit spelling), or `api.InPath` /
